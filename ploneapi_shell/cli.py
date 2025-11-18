@@ -395,7 +395,8 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]raw [path][/cyan]      - Show raw JSON")
                 CONSOLE.print("\n[bold]Tags:[/bold]")
                 CONSOLE.print("  [cyan]tags [path][/cyan]     - List all tags with frequency")
-                CONSOLE.print("  [cyan]similar-tags [tag] [threshold][/cyan] - Find similar tags (no tag = find all similar pairs, default threshold: 70)")
+                CONSOLE.print("  [cyan]similar-tags [tag] [threshold][/cyan] - Find similar tags")
+                CONSOLE.print("    Examples: 'similar-tags mytag 80' or 'similar-tags -t 80' or 'similar-tags mytag --threshold 80'")
                 CONSOLE.print("  [cyan]merge-tags <old> <new>[/cyan] - Merge two tags")
                 CONSOLE.print("  [cyan]rename-tag <old> <new>[/cyan] - Rename a tag")
                 CONSOLE.print("  [cyan]remove-tag <tag>[/cyan] - Remove a tag from all items")
@@ -517,7 +518,10 @@ def cmd_repl(
             elif cmd == "tags":
                 path = args[0] if args else current_path
                 try:
-                    tag_counts = api.get_all_tags(resolved_base, path, no_auth=False)
+                    def warn_print(msg: str) -> None:
+                        CONSOLE.print(msg)
+                    
+                    tag_counts = api.get_all_tags(resolved_base, path, no_auth=False, warn_callback=warn_print)
                     if not tag_counts:
                         CONSOLE.print("[yellow]No tags found.[/yellow]")
                     else:
@@ -532,17 +536,73 @@ def cmd_repl(
                     CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "similar-tags":
                 # Parse arguments: [tag] [threshold] or [threshold] if first arg is a number
+                # Also supports: -t/--threshold flags
+                # Examples:
+                #   similar-tags 80              -> threshold=80, no query tag
+                #   similar-tags mytag 80        -> query_tag="mytag", threshold=80
+                #   similar-tags mytag           -> query_tag="mytag", threshold=70 (default)
+                #   similar-tags -t 80           -> threshold=80, no query tag
+                #   similar-tags mytag -t 80     -> query_tag="mytag", threshold=80
+                #   similar-tags --threshold 80  -> threshold=80, no query tag
                 query_tag = None
                 threshold = 70
-                if args:
-                    if args[0].isdigit():
-                        # First arg is a threshold number
-                        threshold = int(args[0])
-                    else:
-                        # First arg is a tag
-                        query_tag = args[0]
-                        if len(args) > 1 and args[1].isdigit():
-                            threshold = int(args[1])
+                
+                # Parse flags first
+                remaining_args = []
+                i = 0
+                while i < len(args):
+                    arg = args[i]
+                    if arg in ("-t", "--threshold"):
+                        if i + 1 < len(args):
+                            try:
+                                threshold = int(args[i + 1])
+                                if not (0 <= threshold <= 100):
+                                    CONSOLE.print(f"[yellow]Warning: Threshold {threshold} out of range (0-100), using 70[/yellow]")
+                                    threshold = 70
+                                i += 2  # Skip flag and value
+                                continue
+                            except ValueError:
+                                CONSOLE.print(f"[yellow]Warning: '{args[i + 1]}' is not a valid threshold (0-100), using 70[/yellow]")
+                                i += 2  # Skip flag and invalid value
+                                continue
+                        else:
+                            CONSOLE.print(f"[yellow]Warning: '{arg}' requires a value, using default threshold 70[/yellow]")
+                            i += 1
+                            continue
+                    remaining_args.append(arg)
+                    i += 1
+                
+                # Parse remaining positional arguments
+                if remaining_args:
+                    # Check if first arg is a number (threshold)
+                    try:
+                        # Try to parse as integer
+                        threshold_candidate = int(remaining_args[0])
+                        if 0 <= threshold_candidate <= 100:
+                            # Valid threshold range, treat as threshold
+                            threshold = threshold_candidate
+                        else:
+                            # Out of range, treat as tag name
+                            query_tag = remaining_args[0]
+                            if len(remaining_args) > 1:
+                                try:
+                                    threshold = int(remaining_args[1])
+                                    if not (0 <= threshold <= 100):
+                                        CONSOLE.print(f"[yellow]Warning: Threshold {threshold} out of range (0-100), using 70[/yellow]")
+                                        threshold = 70
+                                except ValueError:
+                                    CONSOLE.print(f"[yellow]Warning: '{remaining_args[1]}' is not a valid threshold (0-100), using 70[/yellow]")
+                    except ValueError:
+                        # First arg is not a number, treat as tag name
+                        query_tag = remaining_args[0]
+                        if len(remaining_args) > 1:
+                            try:
+                                threshold = int(remaining_args[1])
+                                if not (0 <= threshold <= 100):
+                                    CONSOLE.print(f"[yellow]Warning: Threshold {threshold} out of range (0-100), using 70[/yellow]")
+                                    threshold = 70
+                            except ValueError:
+                                CONSOLE.print(f"[yellow]Warning: '{remaining_args[1]}' is not a valid threshold (0-100), using 70[/yellow]")
                 path = current_path
                 try:
                     similar_tags = api.find_similar_tags(resolved_base, query_tag, path, threshold, no_auth=False)
@@ -696,7 +756,22 @@ def cmd_tags(
             CONSOLE.print(f"[dim]Debug: Searching for tags in path: '{path or '(root)'}'[/dim]")
             CONSOLE.print(f"[dim]Debug: Base URL: {resolved_base}[/dim]")
         
-        tag_counts = api.get_all_tags(resolved_base, path, no_auth=no_auth, debug=debug)
+        def warn_print(msg: str) -> None:
+            """Print warning messages."""
+            CONSOLE.print(msg)
+        
+        def debug_print(msg: str) -> None:
+            """Print debug messages."""
+            CONSOLE.print(f"[dim]{msg}[/dim]")
+        
+        tag_counts = api.get_all_tags(
+            resolved_base, 
+            path, 
+            no_auth=no_auth, 
+            debug=debug, 
+            warn_callback=warn_print,
+            debug_callback=debug_print if debug else None
+        )
         
         if debug:
             CONSOLE.print(f"[dim]Debug: Found {len(tag_counts)} unique tags[/dim]")

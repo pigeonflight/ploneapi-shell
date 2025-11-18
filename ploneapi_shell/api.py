@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 import httpx
@@ -291,20 +291,36 @@ def search_by_subject(base: str, subject: str, path: str = "", no_auth: bool = F
         return []
 
 
-def get_all_tags(base: str, path: str = "", no_auth: bool = False, debug: bool = False) -> Dict[str, int]:
-    """Get all tags/subjects with their frequency from items in a path."""
+def get_all_tags(base: str, path: str = "", no_auth: bool = False, debug: bool = False, warn_callback: Optional[Callable[[str], None]] = None, debug_callback: Optional[Callable[[str], None]] = None) -> Dict[str, int]:
+    """
+    Get all tags/subjects with their frequency from items in a path.
+    
+    Args:
+        base: Base API URL
+        path: Path to search (empty for root)
+        no_auth: Skip authentication
+        debug: Enable debug output
+        warn_callback: Optional function to call with warning messages (e.g., print or CONSOLE.print)
+        debug_callback: Optional function to call with debug messages (if None, uses print)
+    """
     # Ensure base is a string (handle Typer Option objects)
     if not isinstance(base, str):
         base = get_base_url(None)
     
     tag_counts: Dict[str, int] = {}
+    used_search = False
     
-    # Try search endpoint first
+    # Try search endpoint first - query the catalog for items with subjects
     try:
         search_url = resolve_url("@search", base)
+        # Query for items that have subjects (Subject index is a KeywordIndex)
+        # We'll get all items and extract their subjects
         params = {
-            "b_size": 1000,  # Get up to 1000 items
+            "b_size": 1000,  # Get up to 1000 items per page
+            "metadata_fields": "_all",  # Request all metadata including Subject field
         }
+        # Explicitly request Subject field if the API supports it
+        # Some Plone REST API versions need explicit field requests
         if path:
             params["path"] = path
         
@@ -318,72 +334,163 @@ def get_all_tags(base: str, path: str = "", no_auth: bool = False, debug: bool =
         response.raise_for_status()
         data = response.json()
         items = data.get("items", [])
+        used_search = True
         
         if debug:
-            print(f"DEBUG: Search returned {len(items)} items")
+            debug_msg = debug_callback or print
+            debug_msg(f"DEBUG: Search returned {len(items)} items")
             if items:
-                print(f"DEBUG: First item keys: {list(items[0].keys())}")
-                print(f"DEBUG: First item sample: {list(items[0].items())[:10]}")
+                debug_msg(f"DEBUG: First item keys: {list(items[0].keys())}")
+                # Check specifically for Subject field (Plone's standard field name)
+                if "Subject" in items[0]:
+                    debug_msg(f"DEBUG: ✓ Found 'Subject' field: {items[0]['Subject']}")
+                elif "subject" in items[0]:
+                    debug_msg(f"DEBUG: ✓ Found 'subject' field (lowercase): {items[0]['subject']}")
+                else:
+                    debug_msg(f"DEBUG: ✗ 'Subject' field NOT found in first item")
+                    # Show all keys that might contain subjects
+                    subject_keys = [k for k in items[0].keys() if 'subject' in k.lower() or 'tag' in k.lower() or 'keyword' in k.lower()]
+                    if subject_keys:
+                        debug_msg(f"DEBUG: Potential subject-related keys found: {subject_keys}")
+                        for key in subject_keys[:3]:  # Show first 3 subject keys
+                            debug_msg(f"DEBUG: {key} = {items[0].get(key)}")
+                    else:
+                        debug_msg(f"DEBUG: No subject-related keys found. All keys: {list(items[0].keys())}")
+                # Show full first item structure for debugging
+                debug_msg(f"DEBUG: First item full structure (first 30 keys):")
+                for i, (k, v) in enumerate(list(items[0].items())[:30]):
+                    if isinstance(v, (list, dict)) and len(str(v)) > 100:
+                        debug_msg(f"  {k}: {type(v).__name__} (length: {len(v) if hasattr(v, '__len__') else 'N/A'})")
+                    else:
+                        debug_msg(f"  {k}: {v}")
         
-        # Collect all subjects from items - try multiple field names
-        # If search results don't have subjects, fetch full items
+        # Collect all subjects from items
+        # In Plone, subjects are stored in the Subject field and indexed in portal_catalog
+        # The REST API should return them in the item metadata
         items_without_subjects = []
+        items_checked = 0
         for item in items:
-            # Try different possible field names for subjects/tags
-            subjects = (
-                item.get("subjects") or 
-                item.get("Subject") or 
-                item.get("subject") or
-                item.get("keywords") or
-                item.get("Keywords") or
-                item.get("tags") or
-                item.get("Tags") or
-                []
-            )
+            items_checked += 1
+            # In Plone, the Subject field is the primary field for tags/keywords
+            # It's indexed in portal_catalog as a KeywordIndex
+            # Check for Subject field first (capital S is the standard)
+            subjects = None
             
-            # If it's a string, convert to list
-            if isinstance(subjects, str):
-                subjects = [subjects]
+            # Priority 1: Direct Subject field (most common in Plone REST API)
+            if "Subject" in item:
+                subjects = item["Subject"]
+            # Priority 2: Lowercase subject (some REST API implementations)
+            elif "subject" in item:
+                subjects = item["subject"]
+            # Priority 3: Check in @components (some REST API versions nest it)
+            elif "@components" in item and "Subject" in item["@components"]:
+                subjects = item["@components"]["Subject"]
+            # Priority 4: Check in metadata if present
+            elif "metadata" in item and "Subject" in item["metadata"]:
+                subjects = item["metadata"]["Subject"]
+            # Priority 5: Other possible field names
+            elif "subjects" in item:
+                subjects = item["subjects"]
+            elif "keywords" in item:
+                subjects = item["keywords"]
+            elif "Keywords" in item:
+                subjects = item["Keywords"]
+            elif "tags" in item:
+                subjects = item["tags"]
+            elif "Tags" in item:
+                subjects = item["Tags"]
+            
+            # Handle different data types
+            if subjects is None:
+                subjects = []
+            elif isinstance(subjects, str):
+                # Single string value - convert to list
+                subjects = [subjects] if subjects else []
+            elif not isinstance(subjects, list):
+                # Try to convert other types
+                try:
+                    subjects = list(subjects) if subjects else []
+                except (TypeError, ValueError):
+                    subjects = []
+            
+            # Filter out empty strings and None values
+            subjects = [s for s in subjects if s and isinstance(s, str) and s.strip()]
             
             if subjects:
                 for subject in subjects:
+                    subject = subject.strip()
                     if subject:
                         tag_counts[subject] = tag_counts.get(subject, 0) + 1
+                if debug and items_checked <= 5:
+                    debug_msg = debug_callback or print
+                    debug_msg(f"DEBUG: Item {items_checked} has subjects: {subjects}")
             else:
                 # Store item URL to fetch full details later
                 item_url = item.get("@id")
                 if item_url:
                     items_without_subjects.append(item_url)
+                if debug and items_checked <= 5:
+                    debug_msg = debug_callback or print
+                    debug_msg(f"DEBUG: Item {items_checked} has no subjects. Keys: {list(item.keys())[:20]}")
         
         # Fetch full item details for items that didn't have subjects in search results
         if items_without_subjects and not tag_counts:
             if debug:
-                print(f"DEBUG: Fetching full details for {len(items_without_subjects[:10])} items (showing first 10)")
-            for item_url in items_without_subjects[:100]:  # Limit to 100 to avoid too many requests
+                print(f"DEBUG: No subjects found in search results. Fetching full details for {min(len(items_without_subjects), 100)} items")
+            for idx, item_url in enumerate(items_without_subjects[:100]):  # Limit to 100 to avoid too many requests
                 try:
                     # Extract path from full URL
                     item_path = item_url.replace(base.rstrip("/"), "").lstrip("/")
                     _, full_item = fetch(item_path, base, {}, {}, no_auth)
                     
-                    subjects = (
-                        full_item.get("subjects") or 
-                        full_item.get("Subject") or 
-                        full_item.get("subject") or
-                        full_item.get("keywords") or
-                        full_item.get("Keywords") or
-                        full_item.get("tags") or
-                        full_item.get("Tags") or
-                        []
-                    )
+                    # Try same comprehensive field checking for full items
+                    # Priority: Subject field first (Plone's standard)
+                    subjects = None
+                    if "Subject" in full_item:
+                        subjects = full_item["Subject"]
+                    elif "subject" in full_item:
+                        subjects = full_item["subject"]
+                    elif "@components" in full_item and "Subject" in full_item["@components"]:
+                        subjects = full_item["@components"]["Subject"]
+                    elif "metadata" in full_item and "Subject" in full_item["metadata"]:
+                        subjects = full_item["metadata"]["Subject"]
+                    elif "subjects" in full_item:
+                        subjects = full_item["subjects"]
+                    elif "keywords" in full_item:
+                        subjects = full_item["keywords"]
+                    elif "Keywords" in full_item:
+                        subjects = full_item["Keywords"]
+                    elif "tags" in full_item:
+                        subjects = full_item["tags"]
+                    elif "Tags" in full_item:
+                        subjects = full_item["Tags"]
                     
-                    if isinstance(subjects, str):
-                        subjects = [subjects]
+                    if subjects is None:
+                        subjects = []
+                    elif isinstance(subjects, str):
+                        subjects = [subjects] if subjects else []
+                    elif not isinstance(subjects, list):
+                        try:
+                            subjects = list(subjects) if subjects else []
+                        except (TypeError, ValueError):
+                            subjects = []
+                    
+                    subjects = [s for s in subjects if s and isinstance(s, str) and s.strip()]
                     
                     if subjects:
                         for subject in subjects:
+                            subject = subject.strip()
                             if subject:
                                 tag_counts[subject] = tag_counts.get(subject, 0) + 1
-                except Exception:
+                        if debug and idx < 5:
+                            debug_msg = debug_callback or print
+                            debug_msg(f"DEBUG: Full item fetch {idx+1} found subjects: {subjects}")
+                    elif debug and idx < 5:
+                        debug_msg = debug_callback or print
+                        debug_msg(f"DEBUG: Full item fetch {idx+1} still has no subjects. Keys: {list(full_item.keys())[:20]}")
+                except Exception as e:
+                    if debug and idx < 5:
+                        print(f"DEBUG: Failed to fetch full item {idx+1}: {e}")
                     continue
         
         # Handle pagination if there are more results
@@ -406,86 +513,141 @@ def get_all_tags(base: str, path: str = "", no_auth: bool = False, debug: bool =
                 break
             
             for item in page_items:
-                # Try different possible field names for subjects/tags
-                subjects = (
-                    item.get("subjects") or 
-                    item.get("Subject") or 
-                    item.get("subject") or
-                    item.get("keywords") or
-                    item.get("Keywords") or
-                    item.get("tags") or
-                    item.get("Tags") or
-                    []
-                )
+                # Priority: Subject field first (Plone's standard)
+                subjects = None
+                if "Subject" in item:
+                    subjects = item["Subject"]
+                elif "subject" in item:
+                    subjects = item["subject"]
+                elif "@components" in item and "Subject" in item["@components"]:
+                    subjects = item["@components"]["Subject"]
+                elif "metadata" in item and "Subject" in item["metadata"]:
+                    subjects = item["metadata"]["Subject"]
+                elif "subjects" in item:
+                    subjects = item["subjects"]
+                elif "keywords" in item:
+                    subjects = item["keywords"]
+                elif "Keywords" in item:
+                    subjects = item["Keywords"]
+                elif "tags" in item:
+                    subjects = item["tags"]
+                elif "Tags" in item:
+                    subjects = item["Tags"]
                 
-                # If it's a string, convert to list
-                if isinstance(subjects, str):
-                    subjects = [subjects]
+                if subjects is None:
+                    subjects = []
+                elif isinstance(subjects, str):
+                    subjects = [subjects] if subjects else []
+                elif not isinstance(subjects, list):
+                    try:
+                        subjects = list(subjects) if subjects else []
+                    except (TypeError, ValueError):
+                        subjects = []
+                
+                subjects = [s for s in subjects if s and isinstance(s, str) and s.strip()]
                 
                 if subjects:
                     for subject in subjects:
+                        subject = subject.strip()
                         if subject:
                             tag_counts[subject] = tag_counts.get(subject, 0) + 1
-            
+        
             items.extend(page_items)
             if len(page_items) < params.get("b_size", 1000):
                 break
         
         # If we found tags, return them
         if tag_counts:
+            if debug:
+                print(f"DEBUG: Found {len(tag_counts)} unique tags via search")
             return tag_counts
+        elif debug:
+            print(f"DEBUG: Search succeeded but found no tags in {len(items)} items")
                 
-    except (httpx.HTTPStatusError, httpx.RequestError, Exception):
+    except (httpx.HTTPStatusError, httpx.RequestError, Exception) as e:
+        if debug:
+            print(f"DEBUG: Search failed: {type(e).__name__}: {e}")
         # Fallback to browsing if search fails or returns no subjects
         pass
     
     # Fallback: Browse recursively through the site
-    try:
-        def collect_tags_recursive(current_path: str, visited: set) -> None:
-            """Recursively collect tags from items."""
-            if current_path in visited:
+    if not used_search or not tag_counts:
+        if warn_callback:
+            warn_callback("[yellow]Warning:[/yellow] Search endpoint didn't return tags. Falling back to recursive browsing (this may take a while on large sites)...")
+        
+        # Cache for fetched items to avoid re-fetching
+        item_cache: Dict[str, Dict[str, Any]] = {}
+        visited_paths: set = set()
+        
+        def collect_tags_recursive(current_path: str, depth: int = 0, max_depth: int = 20) -> None:
+            """Recursively collect tags from items with caching."""
+            if current_path in visited_paths or depth > max_depth:
                 return
-            visited.add(current_path)
+            visited_paths.add(current_path)
             
             try:
-                url, data = fetch(current_path, base, {}, {}, no_auth)
+                # Check cache first
+                if current_path in item_cache:
+                    data = item_cache[current_path]
+                else:
+                    url, data = fetch(current_path, base, {}, {}, no_auth)
+                    item_cache[current_path] = data
+                
                 items = data.get("items", [])
                 
                 for item in items:
-                    # Try different possible field names for subjects/tags
-                    subjects = (
-                        item.get("subjects") or 
-                        item.get("Subject") or 
-                        item.get("subject") or
-                        item.get("keywords") or
-                        item.get("Keywords") or
-                        item.get("tags") or
-                        item.get("Tags") or
-                        []
-                    )
+                    # Priority: Subject field first (Plone's standard)
+                    subjects = None
+                    if "Subject" in item:
+                        subjects = item["Subject"]
+                    elif "subject" in item:
+                        subjects = item["subject"]
+                    elif "@components" in item and "Subject" in item["@components"]:
+                        subjects = item["@components"]["Subject"]
+                    elif "metadata" in item and "Subject" in item["metadata"]:
+                        subjects = item["metadata"]["Subject"]
+                    elif "subjects" in item:
+                        subjects = item["subjects"]
+                    elif "keywords" in item:
+                        subjects = item["keywords"]
+                    elif "Keywords" in item:
+                        subjects = item["Keywords"]
+                    elif "tags" in item:
+                        subjects = item["tags"]
+                    elif "Tags" in item:
+                        subjects = item["Tags"]
                     
-                    # If it's a string, convert to list
-                    if isinstance(subjects, str):
-                        subjects = [subjects]
+                    if subjects is None:
+                        subjects = []
+                    elif isinstance(subjects, str):
+                        subjects = [subjects] if subjects else []
+                    elif not isinstance(subjects, list):
+                        try:
+                            subjects = list(subjects) if subjects else []
+                        except (TypeError, ValueError):
+                            subjects = []
+                    
+                    subjects = [s for s in subjects if s and isinstance(s, str) and s.strip()]
                     
                     if subjects:
                         for subject in subjects:
+                            subject = subject.strip()
                             if subject:
                                 tag_counts[subject] = tag_counts.get(subject, 0) + 1
                     
                     # If it's a container, recurse into it
                     if item.get("is_folderish") or item.get("@type") in ("Folder", "Collection"):
                         item_path = item.get("@id", "").replace(base.rstrip("/"), "").lstrip("/")
-                        if item_path and item_path not in visited:
-                            collect_tags_recursive(item_path, visited)
+                        if item_path and item_path not in visited_paths:
+                            collect_tags_recursive(item_path, depth + 1, max_depth)
             except Exception:
                 pass  # Skip if we can't access this path
         
-        # Start from the given path or root
-        collect_tags_recursive(path if path else "", set())
-        
-    except Exception:
-        pass
+        try:
+            # Start from the given path or root
+            collect_tags_recursive(path if path else "", max_depth=20)
+        except Exception:
+            pass
     
     return tag_counts
 
