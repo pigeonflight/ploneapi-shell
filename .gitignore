@@ -21,6 +21,14 @@ wheels/
 .installed.cfg
 *.egg
 
+# Distribution files
+*.dmg
+*.pkg
+*.deb
+*.rpm
+*.msi
+*.exe
+
 # Virtual environments
 .venv/
 venv/

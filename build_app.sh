@@ -87,10 +87,11 @@ fi
 
 # Run PyInstaller
 echo "Running PyInstaller..."
+# Note: Icon is already specified in the spec file, so we don't pass --icon here
 if [ -n "$CODESIGN_IDENTITY" ]; then
-    CODESIGN_IDENTITY="$CODESIGN_IDENTITY" pyinstaller --clean --noconfirm $ICON_ARG ploneapi_shell.spec
+    CODESIGN_IDENTITY="$CODESIGN_IDENTITY" pyinstaller --clean --noconfirm ploneapi_shell.spec
 else
-    pyinstaller --clean --noconfirm $ICON_ARG ploneapi_shell.spec
+    pyinstaller --clean --noconfirm ploneapi_shell.spec
 fi
 
 # Check if app was created
