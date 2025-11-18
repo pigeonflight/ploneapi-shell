@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2025-11-18
+
+### Fixed
+- **Critical**: Fixed URL resolution bug where base URLs without trailing slashes caused login endpoint to resolve incorrectly
+  - `@login` endpoint now correctly resolves to `base/++api++/@login` instead of `base/@login`
+  - Fixes 404 errors when logging in with base URLs like `https://site.com/++api++` (without trailing slash)
+
+## [0.1.2] - 2025-11-18
+
+### Fixed
+- Fixed handling of Typer Option objects being passed to API functions
+  - Added type checks in all API functions to ensure `base` parameter is always a string
+  - Prevents "expected str or httpx.URL got class <typer.models.OptionInfo>" errors
+  - Functions now gracefully fall back to default base URL if invalid type is passed
+
+## [0.1.1] - 2025-11-18
+
+### Fixed
+- Fixed syntax errors in `merge-tags` and `remove-tag` commands (missing exception handlers)
+- Fixed package metadata issues for PyPI upload compatibility
+
 ### Added
 - **Web UI**: Streamlit-based web interface (`ploneapi-shell web`) with command interface
   - Same commands as REPL but with visual tables and JSON viewers

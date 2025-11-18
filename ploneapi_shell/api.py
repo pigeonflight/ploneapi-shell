@@ -29,9 +29,12 @@ def resolve_url(path_or_url: str | None, base: str) -> str:
     if not isinstance(base, str):
         base = get_base_url(None)
     if not path_or_url:
-        return base
+        return base.rstrip("/") + "/"
     if path_or_url.startswith(("http://", "https://")):
         return path_or_url
+    # Ensure base ends with / for proper urljoin behavior
+    if not base.endswith("/"):
+        base = base + "/"
     path = path_or_url.lstrip("/")
     return urljoin(base, path)
 
