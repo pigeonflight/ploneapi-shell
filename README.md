@@ -62,21 +62,47 @@ ploneapi-shell get /news --raw
 
 ### 3. Interactive Shell
 
-Launch the interactive REPL for easier navigation:
+Launch the interactive REPL (default when no command is given):
 
 ```bash
+ploneapi-shell
+# or explicitly:
 ploneapi-shell repl
 ```
 
 Inside the shell, use filesystem-like commands:
-- `ls` - List items with metadata
-- `cd <path>` - Navigate to content
+- `ls` - List items with metadata (title, type, state, modified date)
+- `cd <path>` - Navigate to content (supports relative paths and full URLs)
+  - `cd images` - Navigate to images folder
+  - `cd https://demo.plone.org/images` - Navigate using full URL
 - `pwd` - Show current path
-- `get [path]` - Fetch content
-- `help` - Show commands
+- `get [path]` - Fetch and display content
+- `items [path]` - List items array
+- `raw [path]` - Show raw JSON
+- `components` - List available API components
+- `help` - Show all commands
 - `exit` - Exit shell
 
+**Tab completion**: Press Tab to autocomplete commands and item names (shows clean names like "images" instead of full URLs).
+
 ![Interactive Shell - ls command](screenshots/ls%20command.png)
+
+### 4. Web Interface
+
+Launch a web-based interface with the same command functionality:
+
+```bash
+ploneapi-shell web
+```
+
+This opens a Streamlit web interface at `http://localhost:8501` with:
+- Command input box (same commands as REPL)
+- Visual tables for `ls` and `items` output
+- JSON viewer for `raw` command
+- Sidebar with configuration and authentication
+- Command history
+
+The web interface provides the same functionality as the REPL but with a browser-based UI, making it easier to view and interact with Plone content.
 
 ### Advanced: Using Different Sites
 
@@ -165,7 +191,12 @@ Authenticate with a Plone site and save the token. Prompts for username/password
 Remove saved credentials.
 
 ### `repl`
-Launch interactive shell with tab completion and filesystem-like navigation.
+Launch interactive shell with tab completion and filesystem-like navigation. This is the default when no command is provided.
+
+### `web`
+Launch web-based interface using Streamlit. Opens at `http://localhost:8501` by default.
+- `--port, -p` - Port to run on (default: 8501)
+- `--host, -h` - Host to bind to (default: localhost)
 
 ## API Endpoints
 
