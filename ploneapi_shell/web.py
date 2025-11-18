@@ -65,7 +65,23 @@ def execute_command(cmd: str, args: List[str], base_url: str, current_path: str)
                     result["output"] = "Already at root"
                 result["success"] = True
             else:
-                target = args[0].lstrip("/")
+                target = args[0]
+                # Handle full URLs
+                if target.startswith(("http://", "https://")):
+                    # Extract path from full URL
+                    from urllib.parse import urlparse
+                    parsed = urlparse(target)
+                    # Remove the base URL portion to get relative path
+                    if base_url.rstrip("/") in target:
+                        target = target.replace(base_url.rstrip("/"), "").lstrip("/")
+                    else:
+                        # If it's a different domain, extract just the path
+                        target = parsed.path.lstrip("/")
+                        # Remove ++api++ if present
+                        if target.startswith("++api++/"):
+                            target = target[8:]
+                
+                target = target.lstrip("/")
                 test_path = f"{current_path}/{target}".strip("/") if current_path else target
                 url, data = api.fetch(test_path, base_url, {}, {}, no_auth=False)
                 result["new_path"] = test_path

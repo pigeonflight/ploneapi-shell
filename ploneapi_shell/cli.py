@@ -305,15 +305,28 @@ def cmd_repl(
                 _, data = fetch(current_path, resolved_base, {}, {}, no_auth=False)
                 items = data.get("items", [])
                 for item in items:
-                    item_id = item.get("@id", "")
-                    if not item_id:
-                        continue
-                    rel = item_id.replace(resolved_base, "").lstrip("/")
-                    if rel:
-                        results.append(rel)
+                    # Prefer the 'id' field (usually just the name like "images")
                     item_name = item.get("id")
-                    if item_name and item_name not in results:
-                        results.append(item_name)
+                    if item_name:
+                        if item_name not in results:
+                            results.append(item_name)
+                        continue
+                    
+                    # Fallback: extract from @id URL
+                    item_id = item.get("@id", "")
+                    if item_id:
+                        # Remove base URL to get relative path
+                        if resolved_base in item_id:
+                            rel = item_id.replace(resolved_base, "").lstrip("/")
+                        else:
+                            # Parse URL to get just the last segment
+                            from urllib.parse import urlparse
+                            parsed = urlparse(item_id)
+                            path_parts = parsed.path.rstrip("/").split("/")
+                            rel = path_parts[-1] if path_parts else ""
+                        
+                        if rel and rel not in results:
+                            results.append(rel)
             except Exception:
                 pass
             return results
@@ -422,7 +435,23 @@ def cmd_repl(
                     else:
                         CONSOLE.print("[yellow]Already at root[/yellow]")
                 else:
-                    target = args[0].lstrip("/")
+                    target = args[0]
+                    # Handle full URLs
+                    if target.startswith(("http://", "https://")):
+                        # Extract path from full URL
+                        from urllib.parse import urlparse
+                        parsed = urlparse(target)
+                        # Remove the base URL portion to get relative path
+                        if resolved_base.rstrip("/") in target:
+                            target = target.replace(resolved_base.rstrip("/"), "").lstrip("/")
+                        else:
+                            # If it's a different domain, extract just the path
+                            target = parsed.path.lstrip("/")
+                            # Remove ++api++ if present
+                            if target.startswith("++api++/"):
+                                target = target[8:]
+                    
+                    target = target.lstrip("/")
                     # Try to navigate to the item
                     try:
                         test_path = f"{current_path}/{target}".strip("/") if current_path else target
