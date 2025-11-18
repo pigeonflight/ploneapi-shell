@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] - 2025-01-XX
+
+### Fixed
+- **Fixed `rename-tag` command**: Tag renaming now works correctly
+  - Improved tag replacement logic to properly remove old tag and add new tag
+  - Added verification to ensure updates actually succeed
+  - Better error reporting when updates fail
+  - Fixed case-sensitive tag matching issues
+
 ## [0.1.7] - 2025-01-XX
 
 ### Added
