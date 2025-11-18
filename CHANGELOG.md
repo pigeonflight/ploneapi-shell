@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2025-01-XX
+
+### Added
+- **Tag Management Documentation**: Comprehensive README section covering all tag management features
+  - Detailed examples for `tags`, `similar-tags`, `merge-tags`, `rename-tag`, and `remove-tag` commands
+  - Usage examples for both CLI and REPL modes
+  - Explanation of Plone's Subject field and tag indexing
+
 ## [0.1.5] - 2025-01-XX
 
 ### Added

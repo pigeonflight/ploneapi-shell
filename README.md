@@ -80,6 +80,11 @@ Inside the shell, use filesystem-like commands:
 - `items [path]` - List items array
 - `raw [path]` - Show raw JSON
 - `components` - List available API components
+- `tags [path]` - List all tags with frequency
+- `similar-tags [tag] [threshold]` - Find similar tags (use `-t` or `--threshold` for custom threshold)
+- `merge-tags <old> <new>` - Merge two tags
+- `rename-tag <old> <new>` - Rename a tag
+- `remove-tag <tag>` - Remove a tag from all items
 - `help` - Show all commands
 - `exit` - Exit shell
 
@@ -103,6 +108,81 @@ This opens a Streamlit web interface at `http://localhost:8501` with:
 - Command history
 
 The web interface provides the same functionality as the REPL but with a browser-based UI, making it easier to view and interact with Plone content.
+
+### 5. Tag Management
+
+Plone uses the **Subject** field for tagging content. This tool provides powerful commands for discovering, analyzing, and managing tags across your Plone site.
+
+#### List All Tags
+
+Get a comprehensive list of all tags with their frequency:
+
+```bash
+# List all tags in the entire site
+ploneapi-shell tags
+
+# List tags in a specific path
+ploneapi-shell tags /news
+
+# Enable debug mode to see diagnostic information
+ploneapi-shell tags --debug
+```
+
+The command uses Plone's search endpoint for efficient tag discovery across large sites. If the search endpoint doesn't return tags, it falls back to recursive browsing (with a warning, as this is slower on large sites).
+
+#### Find Similar Tags
+
+Use fuzzy matching to find tags with similar names, useful for cleaning up duplicate or misspelled tags:
+
+```bash
+# Find tags similar to a specific tag (default threshold: 70%)
+ploneapi-shell similar-tags "swimming"
+
+# Use a custom threshold (0-100)
+ploneapi-shell similar-tags "swimming" --threshold 80
+
+# Find all similar tag pairs across the site
+ploneapi-shell similar-tags --threshold 75
+
+# In REPL, use short flags
+ploneapi-shell repl
+> similar-tags -t 80
+> similar-tags mytag --threshold 85
+```
+
+The similarity score uses fuzzy string matching (0-100%), showing tags that might be duplicates or variations.
+
+#### Merge Tags
+
+Merge one tag into another across all items:
+
+```bash
+# Merge "swimming" into "swim" on all items
+ploneapi-shell merge-tags swimming swim
+
+# In REPL
+> merge-tags old-tag new-tag
+```
+
+This finds all items with the old tag and replaces it with the new tag (or adds the new tag if the item doesn't already have it).
+
+#### Rename Tags
+
+Rename a tag across all items (same as merge, but more intuitive name):
+
+```bash
+ploneapi-shell rename-tag old-name new-name
+```
+
+#### Remove Tags
+
+Remove a tag from all items:
+
+```bash
+ploneapi-shell remove-tag unwanted-tag
+```
+
+**Note**: Tag management commands require authentication. Make sure you're logged in with appropriate permissions.
 
 ### Advanced: Using Different Sites
 
@@ -219,6 +299,41 @@ Launch interactive shell with tab completion and filesystem-like navigation. Thi
 Launch web-based interface using Streamlit. Opens at `http://localhost:8501` by default.
 - `--port, -p` - Port to run on (default: 8501)
 - `--host, -h` - Host to bind to (default: localhost)
+
+### `tags [PATH]`
+List all tags (subjects) with their frequency across the site or a specific path.
+- `--path` - Limit search to items in this path
+- `--base` - Override the API base URL
+- `--no-auth` - Skip saved auth headers
+- `--debug` - Show debug information about tag collection
+
+### `similar-tags [TAG]`
+Find tags similar to the given tag using fuzzy matching. If no tag is provided, finds all pairs of similar tags.
+- `--threshold, -t` - Minimum similarity score (0-100, default: 70)
+- `--path` - Limit search to items in this path
+- `--base` - Override the API base URL
+- `--no-auth` - Skip saved auth headers
+
+Examples:
+```bash
+# Find tags similar to "swimming"
+ploneapi-shell similar-tags swimming
+
+# Use custom threshold
+ploneapi-shell similar-tags swimming --threshold 80
+
+# Find all similar tag pairs
+ploneapi-shell similar-tags --threshold 75
+```
+
+### `merge-tags <OLD_TAG> <NEW_TAG>`
+Merge one tag into another across all items. Finds all items with the old tag and replaces it with the new tag.
+
+### `rename-tag <OLD_TAG> <NEW_TAG>`
+Rename a tag across all items (alias for `merge-tags`).
+
+### `remove-tag <TAG>`
+Remove a tag from all items that have it.
 
 ## API Endpoints
 
