@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2025-01-XX
+
+### Added
+- **Configurable similarity threshold**: `similar-tags` command now supports `-t`/`--threshold` flags in REPL
+  - Use `similar-tags -t 80` or `similar-tags mytag --threshold 80` to set custom threshold
+  - Threshold validation (0-100) with helpful warnings for invalid values
+- **Enhanced tag discovery**: Improved Subject field detection for Plone's standard tagging system
+  - Prioritizes checking the `Subject` field (Plone's standard field name)
+  - Checks multiple field locations and formats
+  - Better handling of different REST API response formats
+- **Performance improvements**: Strategic caching for recursive tag browsing
+  - Caches fetched items to avoid re-fetching during recursive browsing
+  - Warning message when falling back to recursive browsing (indicates slower performance on large sites)
+- **Enhanced debug output**: Improved debugging for tag collection
+  - Shows whether Subject field is found in API responses
+  - Displays item structure and field locations for troubleshooting
+  - Better diagnostic information when tags aren't found
+
+### Fixed
+- Improved tag collection reliability by checking Subject field in multiple locations
+- Better error handling and validation for threshold values
+
 ## [0.1.4] - 2025-11-18
 
 ### Added
