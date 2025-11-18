@@ -7,15 +7,19 @@ from __future__ import annotations
 
 import json
 import shlex
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 from ploneapi_shell import api
 
+# Get path to logo
+_logo_path = Path(__file__).parent.parent / "media" / "plone-logo.png"
+
 # Page config
 st.set_page_config(
     page_title="Plone API Shell",
-    page_icon="🔷",
+    page_icon=str(_logo_path) if _logo_path.exists() else None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -187,7 +191,10 @@ def render_output(output: Dict[str, Any]):
 
 # Sidebar for configuration
 with st.sidebar:
-    st.title("🔷 Plone API Shell")
+    # Display Plone logo if available
+    if _logo_path.exists():
+        st.image(str(_logo_path), width=64)
+    st.title("Plone API Shell")
     st.caption("Web interface for exploring Plone REST API")
     
     st.divider()

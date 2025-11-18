@@ -31,7 +31,10 @@ from ploneapi_shell import api
 CONFIG_FILE = api.CONFIG_FILE
 HISTORY_FILE = CONFIG_FILE.parent / "history.txt"
 
-APP = typer.Typer(help="Interactive shell and CLI for exploring Plone REST API sites.")
+APP = typer.Typer(
+    help="Interactive shell and CLI for exploring Plone REST API sites.",
+    invoke_without_command=True,
+)
 CONSOLE = Console()
 DEFAULT_BASE = api.DEFAULT_BASE
 
@@ -293,28 +296,54 @@ def cmd_repl(
     except Exception:
         history = None
     
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "help", "exit", "quit"]
+
     class ReplCompleter(Completer):
+        def _item_suggestions(self) -> List[str]:
+            results: List[str] = []
+            try:
+                _, data = fetch(current_path, resolved_base, {}, {}, no_auth=False)
+                items = data.get("items", [])
+                for item in items:
+                    item_id = item.get("@id", "")
+                    if not item_id:
+                        continue
+                    rel = item_id.replace(resolved_base, "").lstrip("/")
+                    if rel:
+                        results.append(rel)
+                    item_name = item.get("id")
+                    if item_name and item_name not in results:
+                        results.append(item_name)
+            except Exception:
+                pass
+            return results
+
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
-            parts = text.split()
-            if not parts:
+            stripped = text.lstrip()
+            if not stripped:
+                for cmd in COMMANDS:
+                    yield Completion(cmd, start_position=0)
                 return
+
+            parts = stripped.split()
+            last_word = document.get_word_before_cursor(WORD=True)
+            has_trailing_space = text.endswith(" ")
+
+            if len(parts) == 1 and not has_trailing_space:
+                prefix = parts[0]
+                for cmd in COMMANDS:
+                    if cmd.startswith(prefix):
+                        yield Completion(cmd, start_position=-len(prefix))
+                return
+
             cmd = parts[0]
-            if cmd in ("cd", "get", "items", "raw") and len(parts) == 1:
-                # Try to fetch current items for completion
-                try:
-                    _, data = fetch(current_path, resolved_base, {}, {}, no_auth=False)
-                    items = data.get("items", [])
-                    for item in items:
-                        item_id = item.get("@id", "")
-                        if item_id:
-                            # Extract relative path
-                            if resolved_base in item_id:
-                                rel_path = item_id.replace(resolved_base, "").lstrip("/")
-                                if rel_path:
-                                    yield Completion(rel_path, start_position=0)
-                except Exception:
-                    pass
+            if cmd in ("cd", "get", "items", "raw"):
+                suggestions = self._item_suggestions()
+                prefix = last_word if not has_trailing_space else ""
+                for suggestion in suggestions:
+                    if suggestion.startswith(prefix):
+                        yield Completion(suggestion, start_position=-len(prefix))
     
     completer = ReplCompleter()
     
@@ -460,6 +489,13 @@ def cmd_repl(
     CONSOLE.print("\n[dim]Goodbye![/dim]")
 
 
+@APP.callback()
+def main(ctx: typer.Context):
+    """Default entrypoint: start REPL when no subcommand is provided."""
+    if ctx.invoked_subcommand is None:
+        cmd_repl()
+
+
 @APP.command("logout")
 def cmd_logout() -> None:
     if CONFIG_FILE.exists():
@@ -477,9 +513,16 @@ def cmd_web(
     """Launch web interface using Streamlit."""
     import subprocess
     import sys
+    from pathlib import Path
     
-    web_module = "ploneapi_shell.web"
-    cmd = [sys.executable, "-m", "streamlit", "run", "-m", web_module, "--server.port", str(port), "--server.address", host]
+    # Get the path to web.py
+    web_file = Path(__file__).parent / "web.py"
+    cmd = [
+        sys.executable, "-m", "streamlit", "run",
+        str(web_file),
+        "--server.port", str(port),
+        "--server.address", host,
+    ]
     
     CONSOLE.print(f"[green]Starting web interface...[/green]")
     CONSOLE.print(f"[cyan]Open http://{host}:{port} in your browser[/cyan]")
