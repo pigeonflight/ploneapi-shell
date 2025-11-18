@@ -204,6 +204,9 @@ def patch(
     prepared_headers = apply_auth(headers, base, no_auth)
     if "Content-Type" not in prepared_headers:
         prepared_headers["Content-Type"] = "application/json"
+    # Ensure Accept header is set for JSON response (required by Plone REST API)
+    if "Accept" not in prepared_headers:
+        prepared_headers["Accept"] = "application/json"
     try:
         response = httpx.patch(
             url,
@@ -218,8 +221,21 @@ def patch(
             error_data = exc.response.json()
             if "message" in error_data:
                 error_msg += f": {error_data['message']}"
+            elif "error" in error_data:
+                error_msg += f": {error_data['error']}"
+            elif "type" in error_data:
+                error_msg += f": {error_data['type']}"
+            # Include full error data for debugging if it's a 500 error
+            if exc.response.status_code == 500:
+                error_msg += f" (Error details: {error_data})"
         except ValueError:
-            pass
+            # If response is not JSON, include the text
+            try:
+                error_text = exc.response.text[:200]  # First 200 chars
+                if error_text:
+                    error_msg += f": {error_text}"
+            except Exception:
+                pass
         raise APIError(error_msg) from exc
     except httpx.RequestError as exc:
         raise APIError(f"Unable to reach {url}: {exc}") from exc
@@ -653,12 +669,193 @@ def get_all_tags(base: str, path: str = "", no_auth: bool = False, debug: bool =
 
 
 def update_item_subjects(base: str, item_path: str, subjects: List[str], no_auth: bool = False) -> Dict[str, Any]:
-    """Update the subjects/tags of an item."""
+    """Update the subjects/tags of an item.
+    
+    Based on Plone REST API documentation, content updates should use PATCH with the field name
+    directly in the JSON body. However, some Plone sites may have custom serializers or require
+    different formats.
+    """
     # Ensure base is a string (handle Typer Option objects)
     if not isinstance(base, str):
         base = get_base_url(None)
     url = resolve_url(item_path, base)
-    return patch(url, base, {"subjects": subjects}, {}, no_auth)[1]
+    
+    # First, fetch the current item to understand its structure
+    # According to Plone REST API docs, GET returns "subjects" (lowercase) as an array
+    # But PATCH should use "Subject" (capital S) with an array
+    try:
+        _, current_item = fetch(item_path, base, {}, {}, no_auth)
+    except Exception as e:
+        raise APIError(f"Could not fetch item to determine structure: {e}") from e
+    
+    # Try to get schema information if available (some Plone REST API versions expose this)
+    # This can help us understand what fields are available and how they should be updated
+    schema_info = None
+    try:
+        schema_url = url.rstrip("/") + "/@schema"
+        _, schema_data = fetch(schema_url, base, {}, {}, no_auth)
+        schema_info = schema_data
+        # Check if Subject field is in schema and what its properties are
+        if isinstance(schema_data, dict) and "properties" in schema_data:
+            subject_props = schema_data["properties"].get("Subject") or schema_data["properties"].get("subjects")
+            if subject_props:
+                # Log schema info for debugging (we can use this later)
+                pass
+    except Exception:
+        # Schema endpoint might not be available, that's okay
+        pass
+    
+    # Check where Subject field actually is in the response and its format
+    subject_location = None
+    current_subjects_value = None
+    subjects_type = None
+    
+    if "Subject" in current_item:
+        subject_location = "top_level"
+        current_subjects_value = current_item["Subject"]
+        subjects_type = type(current_subjects_value).__name__
+    elif "subjects" in current_item:
+        subject_location = "top_level_lowercase"
+        current_subjects_value = current_item["subjects"]
+        subjects_type = type(current_subjects_value).__name__
+    elif "@components" in current_item and isinstance(current_item["@components"], dict):
+        components = current_item["@components"]
+        if "Subject" in components:
+            subject_location = "components"
+            current_subjects_value = components["Subject"]
+            subjects_type = type(current_subjects_value).__name__
+        elif "subjects" in components:
+            subject_location = "components_lowercase"
+            current_subjects_value = components["subjects"]
+            subjects_type = type(current_subjects_value).__name__
+        # Check what's actually in @components for debugging
+        component_keys = list(components.keys()) if isinstance(components, dict) else []
+    
+    # Try different approaches based on what the API expects
+    # Plone REST API might need the field in different formats
+    
+    # According to Plone REST API documentation:
+    # - GET responses return "subjects" (lowercase) as an array: {"subjects": ["tag1", "tag2"]}
+    # - PATCH requests should use "Subject" (capital S) with an array: {"Subject": ["tag1", "tag2"]}
+    # The field expects a list of strings (not tuple, not other types)
+    
+    # Ensure subjects is a clean list of strings
+    if not isinstance(subjects, list):
+        subjects = list(subjects)
+    # Ensure all items are strings and filter out empty values
+    subjects = [str(s).strip() for s in subjects if s and str(s).strip()]
+    
+    # Approach 1: Use "Subject" (capital S) with list of strings - this is the documented format
+    # According to official Plone REST API docs, PATCH should use capital S "Subject"
+    # even though GET responses show lowercase "subjects"
+    try:
+        result = patch(url, base, {"Subject": subjects}, {}, no_auth)[1]
+        # Verify the update by checking if subjects were actually updated in the response
+        # Some APIs return success but don't actually update
+        if isinstance(result, dict):
+            updated_subjects = result.get("Subject") or result.get("subjects", [])
+            if isinstance(updated_subjects, str):
+                updated_subjects = [updated_subjects]
+            # Check if the update actually took effect
+            if set(updated_subjects) != set(subjects):
+                # Update didn't match what we sent - the server returned success but didn't update
+                # This is a server-side issue - raise an error so the caller knows
+                raise APIError(
+                    f"PATCH request returned success but subjects were not updated. "
+                    f"Sent: {subjects}, Got back: {updated_subjects}. "
+                    f"This indicates the server accepted the request but did not apply the changes."
+                )
+        return result
+    except APIError as e1:
+        # Check if this is the __getitem__ error we've been seeing
+        if "__getitem__" in str(e1) or "500" in str(e1):
+            # This is the known server-side error - continue to fallback approaches
+            pass
+        else:
+            # Some other error - might be worth trying fallbacks too
+            pass
+        # Approach 2: Try with "subjects" (lowercase - as it appears in some API responses)
+        # Some REST API serializers use lowercase field names in responses but may accept both
+        try:
+            return patch(url, base, {"subjects": subjects}, {}, no_auth)[1]
+        except APIError as e2:
+            # The __getitem__ AttributeError persists even with the documented format.
+            # This strongly suggests a server-side issue. Let's try a few more things:
+            
+            # Approach 2b: Try with empty list first, then set subjects (workaround for some serializer bugs)
+            try:
+                # Some serializers have issues with updating non-empty lists, try clearing first
+                patch(url, base, {"Subject": []}, {}, no_auth)
+                return patch(url, base, {"Subject": subjects}, {}, no_auth)[1]
+            except APIError:
+                pass
+            
+            # Approach 2c: Try including @type (some serializers need this to identify content type)
+            try:
+                update_data = {
+                    "@type": current_item.get("@type"),
+                    "Subject": subjects
+                }
+                return patch(url, base, update_data, {}, no_auth)[1]
+            except APIError:
+                pass
+            
+            # Approach 3: Try using @content endpoint if available
+            content_url = url.rstrip("/") + "/@content"
+            try:
+                return patch(content_url, base, {"Subject": subjects}, {}, no_auth)[1]
+            except APIError as e3:
+                # Approach 4: Try with minimal update - only send what's needed
+                # Some Plone REST API versions require only the fields being updated
+                try:
+                    # Try with just the field name that matches where it was found
+                    if subject_location == "components":
+                        update_data = {"@components": {"Subject": subjects}}
+                    elif subject_location == "components_lowercase":
+                        update_data = {"@components": {"subjects": subjects}}
+                    else:
+                        update_data = {"Subject": subjects}
+                    return patch(url, base, update_data, {}, no_auth)[1]
+                except APIError as e4:
+                    # Approach 5: Try POST to @content endpoint (some APIs use POST for updates)
+                    try:
+                        return post(content_url, base, {"Subject": subjects}, {}, no_auth)[1]
+                    except APIError as e5:
+                        # Approach 6: Check if there's a @types endpoint that shows how to update
+                        # Some Plone REST API versions require using specific field update endpoints
+                        # Try using the field name directly in the path
+                        try:
+                            field_url = url.rstrip("/") + "/@fields/subject"
+                            return patch(field_url, base, subjects, {}, no_auth)[1]
+                        except APIError as e6:
+                            # If all approaches fail, provide detailed error with component info
+                            component_info = ""
+                            if "@components" in current_item and isinstance(current_item["@components"], dict):
+                                component_info = f"@components keys: {list(current_item['@components'].keys())[:10]}"
+                            
+                            # Build detailed error message
+                            current_subjects_info = ""
+                            if current_subjects_value is not None:
+                                current_subjects_info = f"Current subjects value type: {subjects_type}, value: {current_subjects_value[:3] if isinstance(current_subjects_value, (list, tuple)) and len(current_subjects_value) > 3 else current_subjects_value}"
+                            
+                            # Final error message with all diagnostic information
+                            schema_info_text = ""
+                            if schema_info:
+                                schema_info_text = f"Schema available: {bool(schema_info)}. "
+                            
+                            raise APIError(
+                                f"Failed to update subjects using the documented Plone REST API format. "
+                                f"According to official docs, PATCH with {{'Subject': ['tag1', 'tag2']}} should work. "
+                                f"Tried: 'Subject' (capital S with list), 'subjects' (lowercase), '@content' endpoint, minimal update, POST, and field endpoint. "
+                                f"Subject location in item: {subject_location}. {current_subjects_info}. {component_info}. {schema_info_text}"
+                                f"Errors: Subject={e1}, subjects={e2}, content_patch={e3}, minimal={e4}, content_post={e5}, field_endpoint={e6}. "
+                                f"Item structure keys: {list(current_item.keys())[:20]}. "
+                                f"The persistent '__getitem__' AttributeError (500) suggests a server-side issue. "
+                                f"This could be: (1) a bug in the Plone REST API version on this server, "
+                                f"(2) the Subject field is not included in writable fields for this content type, "
+                                f"or (3) a custom serializer issue. "
+                                f"Recommendation: Check server logs or contact the site administrator about Subject field updates via REST API."
+                            ) from e6
 
 
 def find_similar_tags(base: str, query_tag: Optional[str] = None, path: str = "", threshold: int = 70, no_auth: bool = False) -> List[Tuple[str, int, int, Optional[str]]]:

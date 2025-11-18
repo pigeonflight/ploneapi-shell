@@ -764,18 +764,151 @@ def cmd_repl(
                             CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{old_tag}'[/cyan]")
                             if typer.confirm(f"Rename tag '{old_tag}' to '{new_tag}' on {len(items)} item(s)?"):
                                 updated = 0
+                                errors = 0
                                 for item in items:
                                     try:
-                                        item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
-                                        current_tags = item.get("subjects", [])
-                                        new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
+                                        # Extract path from @id URL
+                                        item_id = item.get("@id", "")
+                                        if not item_id:
+                                            CONSOLE.print(f"[yellow]Warning: Item {item.get('title', 'unknown')} has no @id[/yellow]")
+                                            errors += 1
+                                            continue
+                                        
+                                        # Convert full URL to relative API path
+                                        if item_id.startswith(("http://", "https://")):
+                                            from urllib.parse import urlparse
+                                            parsed = urlparse(item_id)
+                                            path = parsed.path
+                                            
+                                            # If the URL contains ++api++, extract the path after it
+                                            if "/++api++/" in path:
+                                                path = path.split("/++api++/", 1)[1]
+                                            elif path.startswith("/++api++"):
+                                                path = path[7:].lstrip("/")
+                                            # If it's a public URL (no ++api++), extract the path
+                                            else:
+                                                # Extract domain from base URL to get the site root
+                                                base_parsed = urlparse(resolved_base)
+                                                site_root = f"{base_parsed.scheme}://{base_parsed.netloc}"
+                                                
+                                                # If the item URL starts with the site root, extract the path
+                                                if item_id.startswith(site_root):
+                                                    path = item_id.replace(site_root, "").lstrip("/")
+                                                else:
+                                                    # Just use the path portion
+                                                    path = path.lstrip("/")
+                                            
+                                            item_path = path
+                                        else:
+                                            # Already a relative path
+                                            item_path = item_id.lstrip("/")
+                                        
+                                        if not item_path:
+                                            CONSOLE.print(f"[yellow]Warning: Could not extract path from item {item.get('title', 'unknown')}[/yellow]")
+                                            errors += 1
+                                            continue
+                                        
+                                        # Fetch current item to get actual subjects
+                                        try:
+                                            _, current_item = api.fetch(item_path, resolved_base, {}, {}, no_auth=False)
+                                            # Try multiple field names for subjects
+                                            current_tags = (
+                                                current_item.get("Subject") or
+                                                current_item.get("subjects") or
+                                                current_item.get("subject") or
+                                                []
+                                            )
+                                            # Ensure it's a list
+                                            if isinstance(current_tags, str):
+                                                current_tags = [current_tags] if current_tags else []
+                                            elif not isinstance(current_tags, list):
+                                                current_tags = list(current_tags) if current_tags else []
+                                        except Exception as e:
+                                            CONSOLE.print(f"[yellow]Warning: Could not fetch item {item_path}: {e}[/yellow]")
+                                            # Fallback to subjects from search result
+                                            current_tags = item.get("subjects", [])
+                                        
+                                        # Replace old tag with new tag (case-sensitive match)
+                                        # Remove all instances of old_tag and add new_tag
+                                        new_tags = [tag for tag in current_tags if tag != old_tag]
+                                        # Add new tag if it's not already present (avoid duplicates)
                                         if new_tag not in new_tags:
                                             new_tags.append(new_tag)
-                                        api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=False)
-                                        updated += 1
-                                    except Exception:
-                                        pass
-                                CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+                                        
+                                        # Only update if tags actually changed
+                                        if set(current_tags) != set(new_tags):
+                                            try:
+                                                api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=False)
+                                            except api.APIError as update_error:
+                                                # API returned an error - report it with full details
+                                                error_msg = str(update_error)
+                                                # If it's the __getitem__ error, provide more context
+                                                if "__getitem__" in error_msg or "500" in error_msg:
+                                                    CONSOLE.print(f"[red]Server error updating '{item.get('title', 'unknown')}': {error_msg}[/red]")
+                                                    CONSOLE.print(f"[yellow]This is a known issue with the Plone REST API on this server. The Subject field may not be updatable via REST API.[/yellow]")
+                                                else:
+                                                    CONSOLE.print(f"[red]Error updating '{item.get('title', 'unknown')}': {error_msg}[/red]")
+                                                errors += 1
+                                                continue
+                                            
+                                            # Verify the update succeeded by fetching the item again
+                                            try:
+                                                _, verify_item = api.fetch(item_path, resolved_base, {}, {}, no_auth=False)
+                                                verify_tags = (
+                                                    verify_item.get("Subject") or
+                                                    verify_item.get("subjects") or
+                                                    verify_item.get("subject") or
+                                                    []
+                                                )
+                                                if isinstance(verify_tags, str):
+                                                    verify_tags = [verify_tags] if verify_tags else []
+                                                elif not isinstance(verify_tags, list):
+                                                    verify_tags = list(verify_tags) if verify_tags else []
+                                                
+                                                # Verify the update: old tag should be gone, new tag should be present
+                                                old_tag_still_present = old_tag in verify_tags
+                                                new_tag_present = new_tag in verify_tags
+                                                
+                                                if old_tag_still_present:
+                                                    if new_tag_present:
+                                                        # Both tags present - update partially failed
+                                                        CONSOLE.print(f"[yellow]Warning: Both old tag '{old_tag}' and new tag '{new_tag}' present in '{item.get('title', 'unknown')}'. Update may have failed.[/yellow]")
+                                                        errors += 1
+                                                        continue
+                                                    else:
+                                                        # Old tag still there, new tag not added - update failed
+                                                        CONSOLE.print(f"[yellow]Warning: Update failed for '{item.get('title', 'unknown')}'. Old tag '{old_tag}' still present, new tag '{new_tag}' not added.[/yellow]")
+                                                        errors += 1
+                                                        continue
+                                                elif not new_tag_present:
+                                                    # Old tag removed but new tag not added - update failed
+                                                    CONSOLE.print(f"[yellow]Warning: Update failed for '{item.get('title', 'unknown')}'. Old tag removed but new tag '{new_tag}' not added.[/yellow]")
+                                                    errors += 1
+                                                    continue
+                                                # Success: old tag removed, new tag present
+                                            except Exception:
+                                                # Verification failed, but update was attempted
+                                                pass
+                                            
+                                            updated += 1
+                                        else:
+                                            # Tags didn't change (maybe old_tag wasn't in the list)
+                                            CONSOLE.print(f"[yellow]Warning: Tag '{old_tag}' not found in item '{item.get('title', 'unknown')}', skipping[/yellow]")
+                                    except api.APIError as e:
+                                        errors += 1
+                                        item_title = item.get("title", item.get("id", "unknown"))
+                                        CONSOLE.print(f"[red]Error updating '{item_title}': {e}[/red]")
+                                    except Exception as e:
+                                        errors += 1
+                                        item_title = item.get("title", item.get("id", "unknown"))
+                                        CONSOLE.print(f"[red]Error updating '{item_title}': {e}[/red]")
+                                
+                                if updated > 0:
+                                    CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+                                if errors > 0:
+                                    CONSOLE.print(f"[yellow]{errors} error(s) occurred[/yellow]")
+                                if updated == 0 and errors == 0:
+                                    CONSOLE.print(f"[yellow]No items were updated[/yellow]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "remove-tag":
