@@ -16,7 +16,6 @@ import posixpath
 import shlex
 from urllib.parse import urljoin
 
-import httpx
 import typer
 from rich import box
 from rich.console import Console
@@ -27,13 +26,14 @@ from prompt_toolkit import prompt
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 
-CONFIG_ENV = os.environ.get("PLONEAPI_SHELL_CONFIG")
-CONFIG_FILE = Path(CONFIG_ENV).expanduser() if CONFIG_ENV else Path.home() / ".config" / "ploneapi_shell" / "config.json"
+from ploneapi_shell import api
+
+CONFIG_FILE = api.CONFIG_FILE
 HISTORY_FILE = CONFIG_FILE.parent / "history.txt"
 
 APP = typer.Typer(help="Interactive shell and CLI for exploring Plone REST API sites.")
 CONSOLE = Console()
-DEFAULT_BASE = "https://demo.plone.org/++api++/"
+DEFAULT_BASE = api.DEFAULT_BASE
 
 
 class CliError(typer.Exit):
@@ -42,15 +42,6 @@ class CliError(typer.Exit):
     def __init__(self, message: str, code: int = 1) -> None:
         CONSOLE.print(f"[red]Error:[/red] {message}")
         super().__init__(code)
-
-
-def resolve_url(path_or_url: str | None, base: str) -> str:
-    if not path_or_url:
-        return base
-    if path_or_url.startswith(("http://", "https://")):
-        return path_or_url
-    path = path_or_url.lstrip("/")
-    return urljoin(base, path)
 
 
 def parse_key_values(entries: Iterable[str]) -> Dict[str, str]:
@@ -63,77 +54,21 @@ def parse_key_values(entries: Iterable[str]) -> Dict[str, str]:
     return result
 
 
+# Alias API functions for CLI use
 def load_config() -> Optional[Dict[str, Any]]:
-    try:
-        with CONFIG_FILE.open("r", encoding="utf-8") as handle:
-            return json.load(handle)
-    except FileNotFoundError:
-        return None
-    except json.JSONDecodeError:
-        CONSOLE.print(f"[yellow]Warning:[/yellow] Could not parse {CONFIG_FILE}, ignoring.")
-        return None
+    return api.load_config()
 
 
 def save_config(data: Dict[str, Any]) -> None:
-    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with CONFIG_FILE.open("w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
-    if os.name == "posix":
-        os.chmod(CONFIG_FILE, 0o600)
+    api.save_config(data)
 
 
 def delete_config() -> None:
-    try:
-        CONFIG_FILE.unlink()
-    except FileNotFoundError:
-        return
-
-
-def has_authorization_header(headers: Dict[str, str]) -> bool:
-    return any(key.lower() == "authorization" for key in headers)
-
-
-def get_saved_base() -> Optional[str]:
-    """Get saved base URL from config."""
-    config = load_config()
-    if not config:
-        return None
-    saved_base = config.get("base")
-    return saved_base if saved_base else None
+    api.delete_config()
 
 
 def get_base_url(provided: Optional[str] = None) -> str:
-    """Get base URL from provided value, saved config, or default."""
-    if provided:
-        return provided
-    saved = get_saved_base()
-    if saved:
-        return saved
-    return DEFAULT_BASE
-
-
-def get_saved_auth_headers(base: str) -> Dict[str, str]:
-    config = load_config()
-    if not config:
-        return {}
-    saved_base = config.get("base")
-    if not saved_base:
-        return {}
-    if saved_base.rstrip("/") != base.rstrip("/"):
-        return {}
-    auth = config.get("auth") or {}
-    mode = auth.get("mode")
-    if mode == "token" and auth.get("token"):
-        return {"Authorization": f"Bearer {auth['token']}"}
-    return {}
-
-
-def apply_auth(headers: Dict[str, str], base: str, no_auth: bool) -> Dict[str, str]:
-    merged = dict(headers)
-    if no_auth or has_authorization_header(merged):
-        return merged
-    merged.update(get_saved_auth_headers(base))
-    return merged
+    return api.get_base_url(provided)
 
 
 def fetch(
@@ -143,25 +78,10 @@ def fetch(
     params: Dict[str, str],
     no_auth: bool = False,
 ) -> Tuple[str, Dict]:
-    url = resolve_url(path_or_url, base)
-    prepared_headers = apply_auth(headers, base, no_auth)
     try:
-        response = httpx.get(
-            url,
-            headers=prepared_headers or None,
-            params=params or None,
-            timeout=15,
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise CliError(f"Request failed with status {exc.response.status_code} for {url}") from exc
-    except httpx.RequestError as exc:
-        raise CliError(f"Unable to reach {url}: {exc}") from exc
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise CliError("Response is not JSON.") from exc
-    return url, data
+        return api.fetch(path_or_url, base, headers, params, no_auth)
+    except api.APIError as e:
+        raise CliError(str(e)) from e
 
 
 def post(
@@ -171,35 +91,10 @@ def post(
     headers: Dict[str, str],
     no_auth: bool = False,
 ) -> Tuple[str, Dict]:
-    """POST request to API endpoint."""
-    url = resolve_url(path_or_url, base)
-    prepared_headers = apply_auth(headers, base, no_auth)
-    if "Content-Type" not in prepared_headers:
-        prepared_headers["Content-Type"] = "application/json"
     try:
-        response = httpx.post(
-            url,
-            json=json_data,
-            headers=prepared_headers or None,
-            timeout=15,
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        error_msg = f"Request failed with status {exc.response.status_code} for {url}"
-        try:
-            error_data = exc.response.json()
-            if "message" in error_data:
-                error_msg += f": {error_data['message']}"
-        except ValueError:
-            pass
-        raise CliError(error_msg) from exc
-    except httpx.RequestError as exc:
-        raise CliError(f"Unable to reach {url}: {exc}") from exc
-    try:
-        data = response.json() if response.content else {}
-    except ValueError:
-        data = {}
-    return url, data
+        return api.post(path_or_url, base, json_data, headers, no_auth)
+    except api.APIError as e:
+        raise CliError(str(e)) from e
 
 
 def patch(
@@ -209,35 +104,10 @@ def patch(
     headers: Dict[str, str],
     no_auth: bool = False,
 ) -> Tuple[str, Dict]:
-    """PATCH request to API endpoint."""
-    url = resolve_url(path_or_url, base)
-    prepared_headers = apply_auth(headers, base, no_auth)
-    if "Content-Type" not in prepared_headers:
-        prepared_headers["Content-Type"] = "application/json"
     try:
-        response = httpx.patch(
-            url,
-            json=json_data,
-            headers=prepared_headers or None,
-            timeout=15,
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        error_msg = f"Request failed with status {exc.response.status_code} for {url}"
-        try:
-            error_data = exc.response.json()
-            if "message" in error_data:
-                error_msg += f": {error_data['message']}"
-        except ValueError:
-            pass
-        raise CliError(error_msg) from exc
-    except httpx.RequestError as exc:
-        raise CliError(f"Unable to reach {url}: {exc}") from exc
-    try:
-        data = response.json() if response.content else {}
-    except ValueError:
-        data = {}
-    return url, data
+        return api.patch(path_or_url, base, json_data, headers, no_auth)
+    except api.APIError as e:
+        raise CliError(str(e)) from e
 
 
 def dump_raw(data: Dict) -> None:
@@ -398,20 +268,11 @@ def cmd_login(
     username = username or typer.prompt("Username")
     password = password or typer.prompt("Password", hide_input=True)
     resolved_base = get_base_url(base)
-    login_url = resolve_url("@login", resolved_base)
     try:
-        response = httpx.post(login_url, json={"login": username, "password": password}, timeout=15)
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        raise CliError(f"Login failed with status {exc.response.status_code}.") from exc
-    except httpx.RequestError as exc:
-        raise CliError(f"Unable to reach {login_url}: {exc}") from exc
-    payload = response.json()
-    token = payload.get("token")
-    if not token:
-        raise CliError("Login response did not include a token.")
-    save_config({"base": resolved_base.rstrip("/"), "auth": {"mode": "token", "token": token, "username": username}})
-    CONSOLE.print(f"[green]Token saved to {CONFIG_FILE}[/green]")
+        api.login(resolved_base, username, password)
+        CONSOLE.print(f"[green]Token saved to {CONFIG_FILE}[/green]")
+    except api.APIError as e:
+        raise CliError(str(e)) from e
 
 
 @APP.command("repl")
@@ -424,8 +285,10 @@ def cmd_repl(
     resolved_base = get_base_url(base)
     current_path = ""
     
-    # Load history
+    # Load history - ensure directory exists
+    history = None
     try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
         history = FileHistory(str(HISTORY_FILE))
     except Exception:
         history = None
@@ -604,6 +467,26 @@ def cmd_logout() -> None:
         CONSOLE.print(f"[yellow]Removed saved credentials at {CONFIG_FILE}[/yellow]")
     else:
         CONSOLE.print("No saved credentials found.")
+
+
+@APP.command("web")
+def cmd_web(
+    port: int = typer.Option(8501, "--port", "-p", help="Port to run Streamlit on."),
+    host: str = typer.Option("localhost", "--host", "-h", help="Host to bind to."),
+) -> None:
+    """Launch web interface using Streamlit."""
+    import subprocess
+    import sys
+    
+    web_module = "ploneapi_shell.web"
+    cmd = [sys.executable, "-m", "streamlit", "run", "-m", web_module, "--server.port", str(port), "--server.address", host]
+    
+    CONSOLE.print(f"[green]Starting web interface...[/green]")
+    CONSOLE.print(f"[cyan]Open http://{host}:{port} in your browser[/cyan]")
+    try:
+        subprocess.run(cmd)
+    except KeyboardInterrupt:
+        CONSOLE.print("\n[yellow]Web interface stopped.[/yellow]")
 
 
 if __name__ == "__main__":

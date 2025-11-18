@@ -196,10 +196,35 @@ This tool is built on top of the **Plone REST API** (`plone.restapi`), which pro
 
 ### Plone REST API
 
-The Plone REST API was developed by the Plone community, with significant contributions from:
-- The Plone Foundation and its members
-- The global Plone developer community
-- All contributors to the `plone.restapi` package
+The Plone REST API was originally authored by **Timo Stollenwerk** and has been developed and maintained by the Plone community with significant contributions from:
+
+**Key Contributors:**
+- Timo Stollenwerk (original author)
+- Thomas Buchberger
+- Lukas Graf
+- Víctor Fernández de Alba
+- Paul Roeland
+- Mikel Larreategi
+- Eric Brehault
+- Andreas Zeidler
+- Carsten Senger
+- Tom Gross
+- Roel Bruggink
+- Yann Fouillat (Gagaro)
+- Sune Brøndum Wøller
+- Philippe Gross
+- Andrea Cecchi
+- Luca Bellenghi
+- Giacomo Monari
+- Alin Voinea
+- Rodrigo Ferreira de Souza
+
+**Organizations:**
+- kitconcept GmbH (Germany)
+- 4teamwork (Switzerland)
+- CodeSyntax (Spain)
+
+And many other contributors from the global Plone community.
 
 ### Plone
 
