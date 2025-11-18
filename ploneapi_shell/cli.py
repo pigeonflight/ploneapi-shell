@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import posixpath
@@ -22,7 +23,7 @@ from rich.console import Console
 from rich.json import JSON
 from rich.table import Table
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit import prompt
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 
@@ -163,6 +164,82 @@ def fetch(
     return url, data
 
 
+def post(
+    path_or_url: str | None,
+    base: str,
+    json_data: Dict[str, Any],
+    headers: Dict[str, str],
+    no_auth: bool = False,
+) -> Tuple[str, Dict]:
+    """POST request to API endpoint."""
+    url = resolve_url(path_or_url, base)
+    prepared_headers = apply_auth(headers, base, no_auth)
+    if "Content-Type" not in prepared_headers:
+        prepared_headers["Content-Type"] = "application/json"
+    try:
+        response = httpx.post(
+            url,
+            json=json_data,
+            headers=prepared_headers or None,
+            timeout=15,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        error_msg = f"Request failed with status {exc.response.status_code} for {url}"
+        try:
+            error_data = exc.response.json()
+            if "message" in error_data:
+                error_msg += f": {error_data['message']}"
+        except ValueError:
+            pass
+        raise CliError(error_msg) from exc
+    except httpx.RequestError as exc:
+        raise CliError(f"Unable to reach {url}: {exc}") from exc
+    try:
+        data = response.json() if response.content else {}
+    except ValueError:
+        data = {}
+    return url, data
+
+
+def patch(
+    path_or_url: str | None,
+    base: str,
+    json_data: Dict[str, Any],
+    headers: Dict[str, str],
+    no_auth: bool = False,
+) -> Tuple[str, Dict]:
+    """PATCH request to API endpoint."""
+    url = resolve_url(path_or_url, base)
+    prepared_headers = apply_auth(headers, base, no_auth)
+    if "Content-Type" not in prepared_headers:
+        prepared_headers["Content-Type"] = "application/json"
+    try:
+        response = httpx.patch(
+            url,
+            json=json_data,
+            headers=prepared_headers or None,
+            timeout=15,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        error_msg = f"Request failed with status {exc.response.status_code} for {url}"
+        try:
+            error_data = exc.response.json()
+            if "message" in error_data:
+                error_msg += f": {error_data['message']}"
+        except ValueError:
+            pass
+        raise CliError(error_msg) from exc
+    except httpx.RequestError as exc:
+        raise CliError(f"Unable to reach {url}: {exc}") from exc
+    try:
+        data = response.json() if response.content else {}
+    except ValueError:
+        data = {}
+    return url, data
+
+
 def dump_raw(data: Dict) -> None:
     CONSOLE.print(JSON.from_data(data, indent=2))
 
@@ -184,6 +261,32 @@ def print_items(items: List[Dict]) -> None:
     table.add_column("URL", overflow="fold")
     for item in items:
         table.add_row(item.get("title", "—"), item.get("@type", "—"), item.get("@id", "—"))
+    CONSOLE.print(table)
+
+
+def print_items_with_metadata(items: List[Dict]) -> None:
+    """Print items with rich metadata for ls command."""
+    if not items:
+        CONSOLE.print("[dim]No items[/dim]")
+        return
+    table = Table(box=box.MINIMAL_DOUBLE_HEAD)
+    table.add_column("Title", overflow="fold", style="bold")
+    table.add_column("Type", style="cyan", width=20)
+    table.add_column("State", style="yellow", width=12)
+    table.add_column("Modified", style="dim", width=20)
+    for item in items:
+        title = item.get("title", item.get("id", "—"))
+        item_type = item.get("@type", item.get("type_title", "—"))
+        state = item.get("review_state", "—")
+        modified = item.get("modified", item.get("effective", "—"))
+        if modified and modified != "—":
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(modified.replace("Z", "+00:00"))
+                modified = dt.strftime("%Y-%m-%d %H:%M")
+            except (ValueError, AttributeError):
+                pass
+        table.add_row(title, item_type, state, modified)
     CONSOLE.print(table)
 
 
@@ -309,6 +412,189 @@ def cmd_login(
         raise CliError("Login response did not include a token.")
     save_config({"base": resolved_base.rstrip("/"), "auth": {"mode": "token", "token": token, "username": username}})
     CONSOLE.print(f"[green]Token saved to {CONFIG_FILE}[/green]")
+
+
+@APP.command("repl")
+def cmd_repl(
+    base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL (defaults to saved config or demo site)."),
+) -> None:
+    """Launch interactive shell with filesystem-like navigation."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise CliError("The REPL requires an interactive terminal. Run this command directly in a shell.")
+    resolved_base = get_base_url(base)
+    current_path = ""
+    
+    # Load history
+    try:
+        history = FileHistory(str(HISTORY_FILE))
+    except Exception:
+        history = None
+    
+    class ReplCompleter(Completer):
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor
+            parts = text.split()
+            if not parts:
+                return
+            cmd = parts[0]
+            if cmd in ("cd", "get", "items", "raw") and len(parts) == 1:
+                # Try to fetch current items for completion
+                try:
+                    _, data = fetch(current_path, resolved_base, {}, {}, no_auth=False)
+                    items = data.get("items", [])
+                    for item in items:
+                        item_id = item.get("@id", "")
+                        if item_id:
+                            # Extract relative path
+                            if resolved_base in item_id:
+                                rel_path = item_id.replace(resolved_base, "").lstrip("/")
+                                if rel_path:
+                                    yield Completion(rel_path, start_position=0)
+                except Exception:
+                    pass
+    
+    completer = ReplCompleter()
+    
+    CONSOLE.print("[bold green]Plone API Shell[/bold green]")
+    CONSOLE.print(f"Base URL: [cyan]{resolved_base}[/cyan]")
+    CONSOLE.print("Type 'help' for commands, 'exit' to quit.\n")
+    
+    while True:
+        try:
+            text = prompt(
+                "plone> ",
+                completer=completer,
+                history=history,
+                complete_while_typing=False,
+            )
+            if not text.strip():
+                continue
+            
+            parts = shlex.split(text)
+            if not parts:
+                continue
+            
+            cmd = parts[0].lower()
+            args = parts[1:]
+            
+            if cmd == "exit" or cmd == "quit":
+                break
+            elif cmd == "help":
+                CONSOLE.print("\n[bold]Navigation:[/bold]")
+                CONSOLE.print("  [cyan]ls[/cyan]              - List items in current directory")
+                CONSOLE.print("  [cyan]cd <path>[/cyan]        - Change directory (use '..' to go up)")
+                CONSOLE.print("  [cyan]pwd[/cyan]              - Show current path")
+                CONSOLE.print("\n[bold]Content:[/bold]")
+                CONSOLE.print("  [cyan]get [path][/cyan]       - Fetch and display content")
+                CONSOLE.print("  [cyan]items [path][/cyan]     - List items array")
+                CONSOLE.print("  [cyan]raw [path][/cyan]      - Show raw JSON")
+                CONSOLE.print("\n[bold]File Operations:[/bold]")
+                CONSOLE.print("  [cyan]rename <new_name>[/cyan] - Rename current item")
+                CONSOLE.print("  [cyan]cp <source> <dest>[/cyan] - Copy item")
+                CONSOLE.print("  [cyan]mv <source> <dest>[/cyan] - Move item")
+                CONSOLE.print("\n[bold]Workflow:[/bold]")
+                CONSOLE.print("  [cyan]transitions[/cyan]     - List available workflow transitions")
+                CONSOLE.print("  [cyan]transition <name>[/cyan] - Execute a workflow transition")
+                CONSOLE.print("  [cyan]bulk-transition <name>[/cyan] - Execute transition on all items in current directory")
+                CONSOLE.print("\n[bold]Other:[/bold]")
+                CONSOLE.print("  [cyan]components[/cyan]      - List available components")
+                CONSOLE.print("  [cyan]help[/cyan]            - Show this help")
+                CONSOLE.print("  [cyan]exit[/cyan]            - Exit shell\n")
+            elif cmd == "pwd":
+                path_display = current_path if current_path else "/"
+                CONSOLE.print(f"[cyan]{path_display}[/cyan]")
+            elif cmd == "ls":
+                try:
+                    _, data = fetch(current_path, resolved_base, {}, {}, no_auth=False)
+                    items = data.get("items", [])
+                    if items:
+                        print_items_with_metadata(items)
+                    else:
+                        CONSOLE.print("[dim]No items[/dim]")
+                except CliError as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "cd":
+                if not args:
+                    current_path = ""
+                    CONSOLE.print("[green]Changed to root[/green]")
+                elif args[0] == "..":
+                    # Go up one level
+                    if current_path:
+                        parts_path = current_path.rstrip("/").split("/")
+                        if len(parts_path) > 1:
+                            current_path = "/".join(parts_path[:-1])
+                        else:
+                            current_path = ""
+                    else:
+                        CONSOLE.print("[yellow]Already at root[/yellow]")
+                else:
+                    target = args[0].lstrip("/")
+                    # Try to navigate to the item
+                    try:
+                        test_path = f"{current_path}/{target}".strip("/") if current_path else target
+                        _, data = fetch(test_path, resolved_base, {}, {}, no_auth=False)
+                        current_path = test_path
+                        title = data.get("title", data.get("id", test_path))
+                        CONSOLE.print(f"[green]Changed to:[/green] {title}")
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] Cannot navigate to '{args[0]}': {e}")
+            elif cmd == "get":
+                path = args[0] if args else current_path
+                try:
+                    url, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                    CONSOLE.print(f"[green]GET[/green] {url}")
+                    print_summary(data)
+                    items = data.get("items") or data.get("results")
+                    if isinstance(items, list) and items:
+                        print_items(items[:10])  # Limit to 10 for display
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "items":
+                path = args[0] if args else current_path
+                try:
+                    url, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                    items = data.get("items")
+                    if not isinstance(items, list):
+                        CONSOLE.print("[red]Error:[/red] Response does not contain an 'items' array.")
+                    else:
+                        CONSOLE.print(f"[green]GET[/green] {url}")
+                        print_items(items)
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "raw":
+                path = args[0] if args else current_path
+                try:
+                    url, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                    CONSOLE.print(f"[green]GET[/green] {url}")
+                    dump_raw(data)
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "components":
+                try:
+                    url, data = fetch(None, resolved_base, {}, {}, no_auth=False)
+                    components = data.get("@components")
+                    if not isinstance(components, dict):
+                        CONSOLE.print("[red]Error:[/red] Root response is missing '@components'.")
+                    else:
+                        table = Table(title="Available components", box=box.MINIMAL)
+                        table.add_column("Name", style="bold")
+                        table.add_column("Endpoint")
+                        for name, meta in components.items():
+                            table.add_row(name, meta.get("@id", "—"))
+                        CONSOLE.print(f"[green]GET[/green] {url}")
+                        CONSOLE.print(table)
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+            else:
+                CONSOLE.print(f"[red]Unknown command:[/red] {cmd}. Type 'help' for available commands.")
+        except KeyboardInterrupt:
+            CONSOLE.print("\n[yellow]Use 'exit' to quit[/yellow]")
+        except EOFError:
+            break
+    
+    CONSOLE.print("\n[dim]Goodbye![/dim]")
 
 
 @APP.command("logout")
