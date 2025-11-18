@@ -97,16 +97,16 @@ ploneapi-shell logout
 
 ```bash
 # Get site root
-ploneapi-shell get --base https://www.asaj.com.jm/++api++/
+ploneapi-shell get --base https://yoursite.com/++api++/
 
 # List news items
-ploneapi-shell items /news --base https://www.asaj.com.jm/++api++/
+ploneapi-shell items /news --base https://yoursite.com/++api++/
 
 # Get specific content
-ploneapi-shell get /news/some-article --base https://www.asaj.com.jm/++api++/
+ploneapi-shell get /news/some-article --base https://yoursite.com/++api++/
 
 # View raw JSON
-ploneapi-shell get /news --raw --base https://www.asaj.com.jm/++api++/
+ploneapi-shell get /news --raw --base https://yoursite.com/++api++/
 ```
 
 ### Working with Authenticated Sites

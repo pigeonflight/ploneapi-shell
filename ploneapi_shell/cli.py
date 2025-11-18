@@ -32,7 +32,7 @@ HISTORY_FILE = CONFIG_FILE.parent / "history.txt"
 
 APP = typer.Typer(help="Interactive shell and CLI for exploring Plone REST API sites.")
 CONSOLE = Console()
-DEFAULT_BASE = "https://www.asaj.com.jm/++api++/"
+DEFAULT_BASE = "https://demo.plone.org/++api++/"
 
 
 class CliError(typer.Exit):
@@ -106,7 +106,9 @@ def get_base_url(provided: Optional[str] = None) -> str:
     if provided:
         return provided
     saved = get_saved_base()
-    return saved if saved else DEFAULT_BASE
+    if saved:
+        return saved
+    return DEFAULT_BASE
 
 
 def get_saved_auth_headers(base: str) -> Dict[str, str]:
