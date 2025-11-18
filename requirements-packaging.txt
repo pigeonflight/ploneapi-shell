@@ -1,0 +1,15 @@
+# Packaging requirements for creating standalone distribution
+# Install with: pip install -r requirements-packaging.txt
+
+# PyInstaller for creating standalone executables
+pyinstaller>=6.0.0
+
+# create-dmg for creating macOS DMG files
+# Note: create-dmg is typically installed via Homebrew: brew install create-dmg
+# If you need a Python wrapper, you can use dmgbuild or create-dmg directly
+# For now, we'll document it in the build script
+
+# Additional dependencies that might be needed for packaging
+setuptools>=61.0
+wheel
+

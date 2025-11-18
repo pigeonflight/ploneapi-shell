@@ -81,7 +81,11 @@ Inside the shell, use filesystem-like commands:
 - `raw [path]` - Show raw JSON
 - `components` - List available API components
 - `tags [path]` - List all tags with frequency
-- `similar-tags [tag] [threshold]` - Find similar tags (use `-t` or `--threshold` for custom threshold)
+- `similar-tags [tag] [threshold]` - Find similar tags
+  - `similar-tags swimming` - Find tags similar to "swimming" (default threshold: 70%)
+  - `similar-tags swimming 80` - Find similar tags with threshold 80
+  - `similar-tags swimming -t 85` - Use `-t` flag for threshold
+  - `similar-tags -t 75` - Find all similar pairs with threshold 75
 - `merge-tags <old> <new>` - Merge two tags
 - `rename-tag <old> <new>` - Rename a tag
 - `remove-tag <tag>` - Remove a tag from all items
@@ -139,24 +143,61 @@ The command uses Plone's search endpoint for efficient tag discovery across larg
 
 Use fuzzy matching to find tags with similar names, useful for cleaning up duplicate or misspelled tags:
 
+**CLI Examples:**
 ```bash
 # Find tags similar to a specific tag (default threshold: 70%)
 ploneapi-shell similar-tags "swimming"
 
-# Use a custom threshold (0-100)
+# Use a custom threshold with --threshold flag
 ploneapi-shell similar-tags "swimming" --threshold 80
 
-# Find all similar tag pairs across the site
+# Use short -t flag for threshold
+ploneapi-shell similar-tags "swimming" -t 85
+
+# Find all similar tag pairs across the site (no query tag)
 ploneapi-shell similar-tags --threshold 75
 
-# In REPL, use short flags and tab completion
-ploneapi-shell repl
-> similar-tags -t 80
-> similar-tags sw<Tab>  # Autocompletes tag names
-> similar-tags swimming --threshold 85
+# Find all similar pairs with default threshold (70%)
+ploneapi-shell similar-tags
 ```
 
+**REPL Examples:**
+```bash
+ploneapi-shell repl
+# Find similar tags with default threshold
+> similar-tags swimming
+
+# Use threshold as first argument (finds all pairs with that threshold)
+> similar-tags 80
+
+# Use -t flag for threshold
+> similar-tags swimming -t 80
+
+# Use --threshold flag
+> similar-tags swimming --threshold 85
+
+# Find all similar pairs with custom threshold
+> similar-tags -t 75
+
+# Tab completion for tag names
+> similar-tags sw<Tab>  # Autocompletes tag names starting with "sw"
+```
+
+**Understanding the output:**
+- When you provide a tag: Shows tags similar to that tag with similarity scores
+- When you don't provide a tag: Shows all pairs of similar tags above the threshold
+- Similarity scores range from 0-100% (higher = more similar)
+
 The similarity score uses fuzzy string matching (0-100%), showing tags that might be duplicates or variations.
+
+**Finding misspellings:** Misspelled tags typically have very high similarity scores (98% or higher). To find potential misspellings, use a high threshold:
+```bash
+# Find likely misspellings (98%+ similarity)
+ploneapi-shell similar-tags --threshold 98
+
+# Find misspellings of a specific tag
+ploneapi-shell similar-tags "swimming" --threshold 98
+```
 
 **Tip**: In the REPL, use Tab to autocomplete tag names when providing a query tag. The first autocomplete may be slow as it fetches all tags; subsequent completions are cached.
 
@@ -340,23 +381,56 @@ List all tags (subjects) with their frequency across the site or a specific path
 - `--no-auth` - Skip saved auth headers
 - `--debug` - Show debug information about tag collection
 
-### `similar-tags [TAG]`
+### `similar-tags [TAG] [THRESHOLD]`
 Find tags similar to the given tag using fuzzy matching. If no tag is provided, finds all pairs of similar tags.
+
+**Arguments:**
+- `TAG` (optional) - Tag to find similar matches for. If omitted, finds all similar tag pairs.
+- `THRESHOLD` (optional) - Minimum similarity score (0-100, default: 70). Can be provided as:
+  - Positional argument: `similar-tags swimming 80` or `similar-tags 80` (for all pairs)
+  - Flag: `--threshold 80` or `-t 80`
+
+**Options:**
 - `--threshold, -t` - Minimum similarity score (0-100, default: 70)
 - `--path` - Limit search to items in this path
 - `--base` - Override the API base URL
 - `--no-auth` - Skip saved auth headers
 
-Examples:
+**CLI Examples:**
 ```bash
-# Find tags similar to "swimming"
+# Find tags similar to "swimming" (default threshold: 70%)
 ploneapi-shell similar-tags swimming
 
-# Use custom threshold
-ploneapi-shell similar-tags swimming --threshold 80
+# Find similar tags with custom threshold (positional)
+ploneapi-shell similar-tags swimming 80
 
-# Find all similar tag pairs
+# Find similar tags with custom threshold (flag)
+ploneapi-shell similar-tags swimming --threshold 80
+ploneapi-shell similar-tags swimming -t 85
+
+# Find all similar tag pairs (no query tag)
 ploneapi-shell similar-tags --threshold 75
+ploneapi-shell similar-tags -t 80
+```
+
+**REPL Examples:**
+```bash
+> similar-tags swimming          # Default threshold (70%)
+> similar-tags swimming 80        # Positional threshold
+> similar-tags swimming -t 85     # Flag threshold
+> similar-tags -t 75              # All pairs with threshold 75
+> similar-tags 80                 # All pairs with threshold 80 (positional)
+> similar-tags -t 98              # Find likely misspellings (98%+ similarity)
+> similar-tags swimming -t 98     # Find misspellings of "swimming"
+```
+
+**Finding misspellings:** Misspelled tags typically have very high similarity scores (98% or higher). Use a high threshold to find potential misspellings:
+```bash
+# Find all likely misspellings across the site
+ploneapi-shell similar-tags --threshold 98
+
+# Find misspellings of a specific tag
+ploneapi-shell similar-tags "swimming" --threshold 98
 ```
 
 ### `merge-tags <SOURCE_TAG>... <TARGET_TAG>`

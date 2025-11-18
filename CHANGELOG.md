@@ -14,14 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Autocomplete tag names for `merge-tags`, `rename-tag`, `remove-tag`, and `similar-tags` commands
   - Tags are cached per path/base URL for performance
   - Makes tag management much faster and easier in the interactive shell
+  - Note: First autocomplete may be slow as it fetches all tags; subsequent completions are cached
 - **Multiple tag merging**: `merge-tags` command now supports merging multiple source tags into one target tag
   - Example: `merge-tags swimming diving water-polo water-sports` merges all three tags into "water-sports"
   - Shows summary of items found for each source tag
   - Deduplicates items that have multiple source tags
+- **Enhanced `similar-tags` documentation**: Comprehensive examples showing all usage patterns
+  - CLI and REPL examples for all threshold syntax options (positional, `-t`, `--threshold`)
+  - Examples for finding all similar pairs vs. finding similar tags for a specific tag
+  - Guidance on finding misspellings: misspelled tags typically have 98%+ similarity scores
 
 ### Improved
 - Enhanced documentation with examples of tag autocompletion and multiple tag merging
 - Clearer error messages for tag management commands using `<source_tag>` and `<target_tag>` terminology
+- More explicit examples for `similar-tags` command showing all syntax variations
+- Added guidance on using high thresholds (98%+) to find misspelled tags
 
 ## [0.1.6] - 2025-01-XX
 
