@@ -25,6 +25,9 @@ class APIError(Exception):
 
 def resolve_url(path_or_url: str | None, base: str) -> str:
     """Resolve a path or URL relative to base URL."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     if not path_or_url:
         return base
     if path_or_url.startswith(("http://", "https://")):
@@ -72,6 +75,9 @@ def get_saved_base() -> Optional[str]:
 
 def get_base_url(provided: Optional[str] = None) -> str:
     """Get base URL from provided value, saved config, or default."""
+    # Handle case where Typer Option object might be passed instead of value
+    if provided and not isinstance(provided, str):
+        provided = None
     if provided:
         return provided
     saved = get_saved_base()
@@ -114,6 +120,9 @@ def fetch(
     no_auth: bool = False,
 ) -> Tuple[str, Dict]:
     """Fetch data from API endpoint."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     url = resolve_url(path_or_url, base)
     prepared_headers = apply_auth(headers, base, no_auth)
     try:
@@ -143,6 +152,9 @@ def post(
     no_auth: bool = False,
 ) -> Tuple[str, Dict]:
     """POST request to API endpoint."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     url = resolve_url(path_or_url, base)
     prepared_headers = apply_auth(headers, base, no_auth)
     if "Content-Type" not in prepared_headers:
@@ -181,6 +193,9 @@ def patch(
     no_auth: bool = False,
 ) -> Tuple[str, Dict]:
     """PATCH request to API endpoint."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     url = resolve_url(path_or_url, base)
     prepared_headers = apply_auth(headers, base, no_auth)
     if "Content-Type" not in prepared_headers:
@@ -213,6 +228,9 @@ def patch(
 
 def login(base: str, username: str, password: str) -> Dict[str, Any]:
     """Login to Plone site and return token."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     login_url = resolve_url("@login", base)
     try:
         response = httpx.post(
@@ -238,6 +256,9 @@ def login(base: str, username: str, password: str) -> Dict[str, Any]:
 
 def search_by_subject(base: str, subject: str, path: str = "", no_auth: bool = False) -> List[Dict[str, Any]]:
     """Search for items with a specific subject/tag."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     search_url = resolve_url("@search", base)
     params = {
         "Subject": subject,
@@ -268,6 +289,9 @@ def search_by_subject(base: str, subject: str, path: str = "", no_auth: bool = F
 
 def get_all_tags(base: str, path: str = "", no_auth: bool = False) -> Dict[str, int]:
     """Get all tags/subjects with their frequency from items in a path."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     url, data = fetch(path, base, {}, {}, no_auth)
     items = data.get("items", [])
     
@@ -299,6 +323,9 @@ def get_all_tags(base: str, path: str = "", no_auth: bool = False) -> Dict[str, 
 
 def update_item_subjects(base: str, item_path: str, subjects: List[str], no_auth: bool = False) -> Dict[str, Any]:
     """Update the subjects/tags of an item."""
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
     url = resolve_url(item_path, base)
     return patch(url, base, {"subjects": subjects}, {}, no_auth)[1]
 
