@@ -76,6 +76,8 @@ Inside the shell, use filesystem-like commands:
 - `help` - Show commands
 - `exit` - Exit shell
 
+![Interactive Shell - ls command](screenshots/ls%20command.png)
+
 ### Advanced: Using Different Sites
 
 To work with multiple sites or override the saved base URL:
@@ -180,8 +182,14 @@ Most content items are accessible at their URL path under `++api++`, and contain
 
 ## License
 
-[Add your license here]
+MIT License - see [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2025 David Bain
 
 ## Contributing
 
-[Add contribution guidelines here]
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Author
+
+David Bain ([@pigeonflight](https://x.com/pigeonflight) on X)
