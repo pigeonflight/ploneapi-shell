@@ -88,7 +88,12 @@ Inside the shell, use filesystem-like commands:
 - `help` - Show all commands
 - `exit` - Exit shell
 
-**Tab completion**: Press Tab to autocomplete commands and item names (shows clean names like "images" instead of full URLs).
+**Tab completion**: Press Tab to autocomplete:
+- Commands (e.g., type `mer<Tab>` to complete `merge-tags`)
+- Item names for navigation commands like `cd`, `get`, `items` (shows clean names like "images" instead of full URLs)
+- Tag names for tag management commands like `merge-tags`, `rename-tag`, `remove-tag`, `similar-tags`
+
+**Note**: Tag autocompletion may be slow on the first use as it fetches all tags from the site. Subsequent completions are cached and much faster.
 
 ![Interactive Shell - ls command](screenshots/ls%20command.png)
 
@@ -144,35 +149,57 @@ ploneapi-shell similar-tags "swimming" --threshold 80
 # Find all similar tag pairs across the site
 ploneapi-shell similar-tags --threshold 75
 
-# In REPL, use short flags
+# In REPL, use short flags and tab completion
 ploneapi-shell repl
 > similar-tags -t 80
-> similar-tags mytag --threshold 85
+> similar-tags sw<Tab>  # Autocompletes tag names
+> similar-tags swimming --threshold 85
 ```
 
 The similarity score uses fuzzy string matching (0-100%), showing tags that might be duplicates or variations.
 
+**Tip**: In the REPL, use Tab to autocomplete tag names when providing a query tag. The first autocomplete may be slow as it fetches all tags; subsequent completions are cached.
+
 #### Merge Tags
 
-Merge one tag into another across all items:
+Merge one or more tags into a target tag across all items. The target tag can be an existing tag or a new tag:
 
 ```bash
-# Merge "swimming" into "swim" on all items
+# Merge one tag into another
 ploneapi-shell merge-tags swimming swim
 
-# In REPL
-> merge-tags old-tag new-tag
+# Merge multiple tags into one (consolidate tags)
+ploneapi-shell merge-tags swimming diving water-polo water-sports
+
+# Merge into an existing tag (both tags will be merged)
+ploneapi-shell merge-tags "swimming" "water-sports"
+
+# In REPL (with tab completion for tags)
+> merge-tags sw<Tab>  # Autocompletes tag names starting with "sw"
+> merge-tags swimming diving water-sports
 ```
 
-This finds all items with the old tag and replaces it with the new tag (or adds the new tag if the item doesn't already have it).
+This finds all items with any of the source tags and replaces them with the target tag (or adds the target tag if the item doesn't already have it). The target tag can be an existing tag (to consolidate tags) or a new tag name.
+
+**Tip**: In the REPL, use Tab to autocomplete tag names when typing tag management commands. Note that the first autocomplete may be slow as it fetches all tags from the site; subsequent completions are cached and faster.
 
 #### Rename Tags
 
-Rename a tag across all items (same as merge, but more intuitive name):
+Rename a tag across all items. The new name can be an existing tag (which will merge them) or a new tag:
 
 ```bash
+# Rename to a new tag name
 ploneapi-shell rename-tag old-name new-name
+
+# Rename to an existing tag (merges them)
+ploneapi-shell rename-tag "swimming" "water-sports"
+
+# In REPL (with tab completion)
+> rename-tag <Tab>  # Shows all available tags
+> rename-tag swimming water-sports
 ```
+
+**Tip**: In the REPL, use Tab to autocomplete tag names. The first autocomplete may be slow as it fetches all tags; subsequent completions are cached.
 
 #### Remove Tags
 
@@ -180,7 +207,13 @@ Remove a tag from all items:
 
 ```bash
 ploneapi-shell remove-tag unwanted-tag
+
+# In REPL (with tab completion)
+> remove-tag <Tab>  # Shows all available tags
+> remove-tag unwanted-tag
 ```
+
+**Tip**: In the REPL, use Tab to autocomplete tag names. The first autocomplete may be slow as it fetches all tags; subsequent completions are cached.
 
 **Note**: Tag management commands require authentication. Make sure you're logged in with appropriate permissions.
 
@@ -326,11 +359,22 @@ ploneapi-shell similar-tags swimming --threshold 80
 ploneapi-shell similar-tags --threshold 75
 ```
 
-### `merge-tags <OLD_TAG> <NEW_TAG>`
-Merge one tag into another across all items. Finds all items with the old tag and replaces it with the new tag.
+### `merge-tags <SOURCE_TAG>... <TARGET_TAG>`
+Merge one or more tags into a target tag across all items. Finds all items with any of the source tags and replaces them with the target tag. The target tag can be an existing tag (to consolidate tags) or a new tag name.
 
-### `rename-tag <OLD_TAG> <NEW_TAG>`
-Rename a tag across all items (alias for `merge-tags`).
+Examples:
+```bash
+# Merge one tag
+ploneapi-shell merge-tags swimming swim
+
+# Merge multiple tags
+ploneapi-shell merge-tags swimming diving water-polo water-sports
+```
+
+**REPL Tip**: Use Tab to autocomplete tag names when typing source tags.
+
+### `rename-tag <OLD_NAME> <NEW_NAME>`
+Rename a tag across all items. The new name can be an existing tag (which will merge them) or a new tag name.
 
 ### `remove-tag <TAG>`
 Remove a tag from all items that have it.

@@ -299,6 +299,9 @@ def cmd_repl(
     COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
+        _tag_cache: Optional[List[str]] = None
+        _tag_cache_path: str = ""
+        
         def _item_suggestions(self) -> List[str]:
             results: List[str] = []
             try:
@@ -330,6 +333,23 @@ def cmd_repl(
             except Exception:
                 pass
             return results
+        
+        def _tag_suggestions(self) -> List[str]:
+            """Get tag suggestions, with caching."""
+            # Cache tags per path to avoid fetching on every completion
+            cache_key = f"{resolved_base}:{current_path}"
+            if self._tag_cache is not None and self._tag_cache_path == cache_key:
+                return self._tag_cache
+            
+            try:
+                tag_counts = api.get_all_tags(resolved_base, current_path, no_auth=False)
+                tags = sorted(tag_counts.keys())
+                self._tag_cache = tags
+                self._tag_cache_path = cache_key
+                return tags
+            except Exception:
+                # If fetching fails, return empty list
+                return []
 
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor
@@ -351,12 +371,46 @@ def cmd_repl(
                 return
 
             cmd = parts[0]
+            
+            # Item suggestions for navigation/content commands
             if cmd in ("cd", "get", "items", "raw"):
                 suggestions = self._item_suggestions()
                 prefix = last_word if not has_trailing_space else ""
                 for suggestion in suggestions:
                     if suggestion.startswith(prefix):
                         yield Completion(suggestion, start_position=-len(prefix))
+            
+            # Tag suggestions for tag management commands
+            elif cmd in ("merge-tags", "rename-tag", "remove-tag", "similar-tags"):
+                # For merge-tags, complete tags for all arguments except the last (which is target)
+                # For rename-tag, complete tags for first argument
+                # For remove-tag, complete tags for the argument
+                # For similar-tags, complete tags for first argument (if provided)
+                
+                if cmd == "merge-tags":
+                    # All arguments except last can be source tags
+                    if len(parts) > 1:
+                        suggestions = self._tag_suggestions()
+                        prefix = last_word if not has_trailing_space else ""
+                        for suggestion in suggestions:
+                            if suggestion.startswith(prefix) and suggestion not in parts[1:]:
+                                yield Completion(suggestion, start_position=-len(prefix))
+                elif cmd in ("rename-tag", "remove-tag"):
+                    # First argument is a tag
+                    if len(parts) == 2 and not has_trailing_space:
+                        suggestions = self._tag_suggestions()
+                        prefix = last_word
+                        for suggestion in suggestions:
+                            if suggestion.startswith(prefix):
+                                yield Completion(suggestion, start_position=-len(prefix))
+                elif cmd == "similar-tags":
+                    # First argument (if present) is a tag
+                    if len(parts) == 2 and not has_trailing_space:
+                        suggestions = self._tag_suggestions()
+                        prefix = last_word
+                        for suggestion in suggestions:
+                            if suggestion.startswith(prefix):
+                                yield Completion(suggestion, start_position=-len(prefix))
     
     completer = ReplCompleter()
     
@@ -397,8 +451,10 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]tags [path][/cyan]     - List all tags with frequency")
                 CONSOLE.print("  [cyan]similar-tags [tag] [threshold][/cyan] - Find similar tags")
                 CONSOLE.print("    Examples: 'similar-tags mytag 80' or 'similar-tags -t 80' or 'similar-tags mytag --threshold 80'")
-                CONSOLE.print("  [cyan]merge-tags <old> <new>[/cyan] - Merge two tags")
-                CONSOLE.print("  [cyan]rename-tag <old> <new>[/cyan] - Rename a tag")
+                CONSOLE.print("  [cyan]merge-tags <source>... <target>[/cyan] - Merge one or more source tags into target tag")
+                CONSOLE.print("    Example: merge-tags 'swimming' 'swim' (single tag)")
+                CONSOLE.print("    Example: merge-tags 'swimming' 'diving' 'water-sports' (multiple tags)")
+                CONSOLE.print("  [cyan]rename-tag <old_name> <new_name>[/cyan] - Rename a tag")
                 CONSOLE.print("  [cyan]remove-tag <tag>[/cyan] - Remove a tag from all items")
                 CONSOLE.print("\n[bold]File Operations:[/bold]")
                 CONSOLE.print("  [cyan]rename <new_name>[/cyan] - Rename current item")
@@ -638,24 +694,55 @@ def cmd_repl(
                     CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "merge-tags":
                 if len(args) < 2:
-                    CONSOLE.print("[red]Error:[/red] merge-tags requires two arguments: old_tag new_tag")
+                    CONSOLE.print("[red]Error:[/red] merge-tags requires at least two arguments: <source_tag>... <target_tag>")
+                    CONSOLE.print("  Example: merge-tags 'swimming' 'swim' (merges 'swimming' into 'swim')")
+                    CONSOLE.print("  Example: merge-tags 'swimming' 'diving' 'water-polo' 'water-sports' (merges multiple tags)")
                 else:
-                    old_tag, new_tag = args[0], args[1]
+                    # Last argument is target, all others are source tags
+                    source_tags = args[:-1]
+                    target_tag = args[-1]
                     try:
-                        items = api.search_by_subject(resolved_base, old_tag, current_path, no_auth=False)
-                        if not items:
-                            CONSOLE.print(f"[yellow]No items found with tag '{old_tag}'.[/yellow]")
-                        else:
-                            CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{old_tag}'[/cyan]")
-                            if typer.confirm(f"Merge '{old_tag}' into '{new_tag}' on {len(items)} item(s)?"):
-                                updated = 0
+                        # Collect all items that have any of the source tags
+                        all_items: Dict[str, Dict[str, Any]] = {}  # Use @id as key to deduplicate
+                        source_tag_counts: Dict[str, int] = {}
+                        
+                        for source_tag in source_tags:
+                            try:
+                                items = api.search_by_subject(resolved_base, source_tag, current_path, no_auth=False)
+                                source_tag_counts[source_tag] = len(items)
                                 for item in items:
+                                    item_id = item.get("@id")
+                                    if item_id:
+                                        all_items[item_id] = item
+                            except Exception:
+                                pass
+                        
+                        items_list = list(all_items.values())
+                        
+                        if not items_list:
+                            tag_list = ", ".join(f"'{tag}'" for tag in source_tags)
+                            CONSOLE.print(f"[yellow]No items found with any of the source tags: {tag_list}[/yellow]")
+                        else:
+                            if len(source_tags) == 1:
+                                CONSOLE.print(f"[cyan]Found {len(items_list)} item(s) with tag '{source_tags[0]}'[/cyan]")
+                                confirm_msg = f"Merge '{source_tags[0]}' into '{target_tag}' on {len(items_list)} item(s)?"
+                            else:
+                                tag_list = ", ".join(f"'{tag}'" for tag in source_tags)
+                                CONSOLE.print(f"[cyan]Found {len(items_list)} unique item(s) with tags: {tag_list}[/cyan]")
+                                for tag, count in source_tag_counts.items():
+                                    CONSOLE.print(f"  - '{tag}': {count} item(s)")
+                                confirm_msg = f"Merge {len(source_tags)} tags into '{target_tag}' on {len(items_list)} item(s)?"
+                            
+                            if typer.confirm(confirm_msg):
+                                updated = 0
+                                for item in items_list:
                                     try:
                                         item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
                                         current_tags = item.get("subjects", [])
-                                        new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
-                                        if new_tag not in new_tags:
-                                            new_tags.append(new_tag)
+                                        # Remove all source tags, add target tag if not present
+                                        new_tags = [tag for tag in current_tags if tag not in source_tags]
+                                        if target_tag not in new_tags:
+                                            new_tags.append(target_tag)
                                         api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=False)
                                         updated += 1
                                     except Exception:
@@ -665,7 +752,8 @@ def cmd_repl(
                         CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "rename-tag":
                 if len(args) < 2:
-                    CONSOLE.print("[red]Error:[/red] rename-tag requires two arguments: old_tag new_tag")
+                    CONSOLE.print("[red]Error:[/red] rename-tag requires two arguments: <old_name> <new_name>")
+                    CONSOLE.print("  Example: rename-tag 'swimming' 'swim' (renames 'swimming' to 'swim' on all items)")
                 else:
                     old_tag, new_tag = args[0], args[1]
                     try:
@@ -799,77 +887,118 @@ def cmd_tags(
 
 @APP.command("merge-tags")
 def cmd_merge_tags(
-    old_tag: str = typer.Argument(..., help="Tag to merge from (will be removed)."),
-    new_tag: str = typer.Argument(..., help="Tag to merge into (will be kept)."),
+    source_tags: List[str] = typer.Argument(..., help="Source tag(s) to merge from (will be removed). Can specify multiple tags."),
+    target_tag: str = typer.Argument(..., help="Target tag to merge into (existing or new tag, will be kept)."),
     path: str = typer.Option("", "--path", help="Limit to items in this path."),
     base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be changed without making changes."),
     no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
 ) -> None:
-    """Merge one tag into another (replaces old_tag with new_tag on all items)."""
+    """
+    Merge one or more tags into a target tag.
+    
+    Examples:
+    - Merge one tag: merge-tags swimming swim
+    - Merge multiple tags: merge-tags swimming diving water-polo water-sports
+    """
     resolved_base = get_base_url(base)
-    try:
-        items = api.search_by_subject(resolved_base, old_tag, path, no_auth=no_auth)
-        if not items:
-            CONSOLE.print(f"[yellow]No items found with tag '{old_tag}'.[/yellow]")
-            return
-        
-        CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{old_tag}'[/cyan]")
-        
-        if dry_run:
-            CONSOLE.print("[yellow]DRY RUN - No changes will be made[/yellow]")
-            for item in items[:10]:  # Show first 10
-                title = item.get("title", item.get("id", "—"))
-                current_tags = item.get("subjects", [])
-                new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
-                if new_tag not in new_tags:
-                    new_tags.append(new_tag)
-                CONSOLE.print(f"  {title}: {current_tags} → {new_tags}")
-            if len(items) > 10:
-                CONSOLE.print(f"  ... and {len(items) - 10} more")
-            return
-        
-        # Confirm
-        if not typer.confirm(f"Merge '{old_tag}' into '{new_tag}' on {len(items)} item(s)?"):
-            raise typer.Exit(0)
-        
-        updated = 0
-        errors = 0
-        
-        for item in items:
-            try:
-                item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
-                current_tags = item.get("subjects", [])
-                # Replace old_tag with new_tag, ensure new_tag exists
-                new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
-                if new_tag not in new_tags:
-                    new_tags.append(new_tag)
-                
-                api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=no_auth)
-                updated += 1
-            except Exception as e:
-                errors += 1
-                CONSOLE.print(f"[red]Error updating {item.get('title', 'item')}: {e}[/red]")
-        
-        CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
-        if errors:
-            CONSOLE.print(f"[yellow]{errors} error(s) occurred[/yellow]")
-    except api.APIError as e:
-        raise CliError(str(e)) from e
+    
+    # If only one source tag provided, use the old behavior
+    # If multiple, merge all of them
+    if not source_tags:
+        CONSOLE.print("[red]Error:[/red] At least one source tag is required")
+        raise typer.Exit(1)
+    
+    # Collect all items that have any of the source tags
+    all_items: Dict[str, Dict[str, Any]] = {}  # Use @id as key to deduplicate
+    source_tag_counts: Dict[str, int] = {}
+    
+    for source_tag in source_tags:
+        try:
+            items = api.search_by_subject(resolved_base, source_tag, path, no_auth=no_auth)
+            source_tag_counts[source_tag] = len(items)
+            for item in items:
+                item_id = item.get("@id")
+                if item_id:
+                    all_items[item_id] = item
+        except api.APIError as e:
+            CONSOLE.print(f"[yellow]Warning: Could not search for tag '{source_tag}': {e}[/yellow]")
+    
+    items_list = list(all_items.values())
+    
+    if not items_list:
+        tag_list = ", ".join(f"'{tag}'" for tag in source_tags)
+        CONSOLE.print(f"[yellow]No items found with any of the source tags: {tag_list}[/yellow]")
+        return
+    
+    # Show summary
+    if len(source_tags) == 1:
+        CONSOLE.print(f"[cyan]Found {len(items_list)} item(s) with tag '{source_tags[0]}'[/cyan]")
+    else:
+        tag_list = ", ".join(f"'{tag}'" for tag in source_tags)
+        CONSOLE.print(f"[cyan]Found {len(items_list)} unique item(s) with tags: {tag_list}[/cyan]")
+        for tag, count in source_tag_counts.items():
+            CONSOLE.print(f"  - '{tag}': {count} item(s)")
+    
+    if dry_run:
+        CONSOLE.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+        for item in items_list[:10]:  # Show first 10
+            title = item.get("title", item.get("id", "—"))
+            current_tags = item.get("subjects", [])
+            # Remove all source tags, add target tag if not present
+            new_tags = [tag for tag in current_tags if tag not in source_tags]
+            if target_tag not in new_tags:
+                new_tags.append(target_tag)
+            CONSOLE.print(f"  {title}: {current_tags} → {new_tags}")
+        if len(items_list) > 10:
+            CONSOLE.print(f"  ... and {len(items_list) - 10} more")
+        return
+    
+    # Confirm
+    if len(source_tags) == 1:
+        confirm_msg = f"Merge '{source_tags[0]}' into '{target_tag}' on {len(items_list)} item(s)?"
+    else:
+        tag_list = ", ".join(f"'{tag}'" for tag in source_tags)
+        confirm_msg = f"Merge {len(source_tags)} tags ({tag_list}) into '{target_tag}' on {len(items_list)} item(s)?"
+    
+    if not typer.confirm(confirm_msg):
+        raise typer.Exit(0)
+    
+    updated = 0
+    errors = 0
+    
+    for item in items_list:
+        try:
+            item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
+            current_tags = item.get("subjects", [])
+            # Remove all source tags, add target tag if not present
+            new_tags = [tag for tag in current_tags if tag not in source_tags]
+            if target_tag not in new_tags:
+                new_tags.append(target_tag)
+            
+            api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=no_auth)
+            updated += 1
+        except Exception as e:
+            errors += 1
+            CONSOLE.print(f"[red]Error updating {item.get('title', 'item')}: {e}[/red]")
+    
+    CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+    if errors:
+        CONSOLE.print(f"[yellow]{errors} error(s) occurred[/yellow]")
 
 
 @APP.command("rename-tag")
 def cmd_rename_tag(
-    old_tag: str = typer.Argument(..., help="Tag to rename."),
-    new_tag: str = typer.Argument(..., help="New tag name."),
+    old_tag: str = typer.Argument(..., help="Current tag name to rename."),
+    new_tag: str = typer.Argument(..., help="New tag name (can be existing or new tag)."),
     path: str = typer.Option("", "--path", help="Limit to items in this path."),
     base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be changed without making changes."),
     no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
 ) -> None:
     """Rename a tag (same as merge-tags but removes old tag)."""
-    # This is essentially the same as merge-tags
-    cmd_merge_tags(old_tag, new_tag, path, base, dry_run, no_auth)
+    # This is essentially the same as merge-tags with a single source
+    cmd_merge_tags([old_tag], new_tag, path, base, dry_run, no_auth)
 
 
 @APP.command("remove-tag")

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2025-01-XX
+
+### Added
+- **Tag autocompletion in REPL**: Tab completion now works for tag names in tag management commands
+  - Autocomplete tag names for `merge-tags`, `rename-tag`, `remove-tag`, and `similar-tags` commands
+  - Tags are cached per path/base URL for performance
+  - Makes tag management much faster and easier in the interactive shell
+- **Multiple tag merging**: `merge-tags` command now supports merging multiple source tags into one target tag
+  - Example: `merge-tags swimming diving water-polo water-sports` merges all three tags into "water-sports"
+  - Shows summary of items found for each source tag
+  - Deduplicates items that have multiple source tags
+
+### Improved
+- Enhanced documentation with examples of tag autocompletion and multiple tag merging
+- Clearer error messages for tag management commands using `<source_tag>` and `<target_tag>` terminology
+
 ## [0.1.6] - 2025-01-XX
 
 ### Added
