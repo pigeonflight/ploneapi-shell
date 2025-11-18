@@ -132,6 +132,86 @@ def execute_command(cmd: str, args: List[str], base_url: str, current_path: str)
             }
             result["success"] = True
             
+        elif cmd == "tags":
+            path = args[0] if args else current_path
+            try:
+                tag_counts = api.get_all_tags(base_url, path, no_auth=False)
+                result["output"] = {
+                    "type": "tags",
+                    "tags": tag_counts,
+                }
+                result["success"] = True
+            except api.APIError as e:
+                result["error"] = str(e)
+            except Exception as e:
+                result["error"] = f"Error: {e}"
+                
+        elif cmd == "merge-tags":
+            if len(args) < 2:
+                result["error"] = "merge-tags requires two arguments: old_tag new_tag"
+            else:
+                old_tag, new_tag = args[0], args[1]
+                try:
+                    items = api.search_by_subject(base_url, old_tag, current_path, no_auth=False)
+                    if not items:
+                        result["output"] = f"No items found with tag '{old_tag}'."
+                        result["success"] = True
+                    else:
+                        result["output"] = {
+                            "type": "merge_preview",
+                            "old_tag": old_tag,
+                            "new_tag": new_tag,
+                            "items": items,
+                            "count": len(items),
+                        }
+                        result["success"] = True
+                except Exception as e:
+                    result["error"] = f"Error: {e}"
+                    
+        elif cmd == "rename-tag":
+            if len(args) < 2:
+                result["error"] = "rename-tag requires two arguments: old_tag new_tag"
+            else:
+                # Same as merge-tags for now
+                old_tag, new_tag = args[0], args[1]
+                try:
+                    items = api.search_by_subject(base_url, old_tag, current_path, no_auth=False)
+                    if not items:
+                        result["output"] = f"No items found with tag '{old_tag}'."
+                        result["success"] = True
+                    else:
+                        result["output"] = {
+                            "type": "rename_preview",
+                            "old_tag": old_tag,
+                            "new_tag": new_tag,
+                            "items": items,
+                            "count": len(items),
+                        }
+                        result["success"] = True
+                except Exception as e:
+                    result["error"] = f"Error: {e}"
+                    
+        elif cmd == "remove-tag":
+            if not args:
+                result["error"] = "remove-tag requires a tag name"
+            else:
+                tag = args[0]
+                try:
+                    items = api.search_by_subject(base_url, tag, current_path, no_auth=False)
+                    if not items:
+                        result["output"] = f"No items found with tag '{tag}'."
+                        result["success"] = True
+                    else:
+                        result["output"] = {
+                            "type": "remove_preview",
+                            "tag": tag,
+                            "items": items,
+                            "count": len(items),
+                        }
+                        result["success"] = True
+                except Exception as e:
+                    result["error"] = f"Error: {e}"
+            
         else:
             result["error"] = f"Unknown command: {cmd}. Type 'help' for available commands."
             
@@ -203,6 +283,42 @@ def render_output(output: Dict[str, Any]):
             })
         df = pd.DataFrame(df_data)
         st.dataframe(df, use_container_width=True, hide_index=True)
+        
+    elif output["type"] == "tags":
+        tags = output.get("tags", {})
+        if not tags:
+            st.info("No tags found")
+        else:
+            import pandas as pd
+            sorted_tags = sorted(tags.items(), key=lambda x: (-x[1], x[0].lower()))
+            df_data = [{"Tag": tag, "Count": count} for tag, count in sorted_tags]
+            df = pd.DataFrame(df_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+    elif output["type"] in ("merge_preview", "rename_preview", "remove_preview"):
+        items = output.get("items", [])
+        count = output.get("count", 0)
+        if output["type"] == "merge_preview":
+            st.warning(f"Found {count} item(s) with tag '{output['old_tag']}'. Use the form below to merge into '{output['new_tag']}'.")
+        elif output["type"] == "rename_preview":
+            st.warning(f"Found {count} item(s) with tag '{output['old_tag']}'. Use the form below to rename to '{output['new_tag']}'.")
+        else:
+            st.warning(f"Found {count} item(s) with tag '{output['tag']}'. Use the form below to remove it.")
+        
+        # Show preview of items
+        if items:
+            import pandas as pd
+            df_data = []
+            for item in items[:20]:
+                df_data.append({
+                    "Title": item.get("title", item.get("id", "—")),
+                    "Type": item.get("@type", "—"),
+                    "Current Tags": ", ".join(item.get("subjects", [])),
+                })
+            df = pd.DataFrame(df_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            if len(items) > 20:
+                st.caption(f"... and {len(items) - 20} more items")
 
 
 # Sidebar for configuration
@@ -264,6 +380,12 @@ with st.sidebar:
         - `get [path]` - Fetch content
         - `items [path]` - List items array
         - `raw [path]` - Show raw JSON
+        
+        **Tags:**
+        - `tags [path]` - List all tags with frequency
+        - `merge-tags <old> <new>` - Merge two tags
+        - `rename-tag <old> <new>` - Rename a tag
+        - `remove-tag <tag>` - Remove a tag
         
         **Other:**
         - `components` - List available components

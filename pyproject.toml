@@ -8,9 +8,8 @@ version = "0.1.0"
 description = "Interactive shell and CLI for exploring Plone REST API sites"
 readme = "README.md"
 requires-python = ">=3.8"
-license = {text = "MIT"}
 authors = [
-    {name = "David Bain", email = ""}
+    {name = "David Bain", email = "david.bain@incrementic.com"}
 ]
 keywords = ["plone", "api", "rest", "cli", "shell", "explorer"]
 classifiers = [

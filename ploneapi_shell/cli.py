@@ -296,7 +296,7 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "merge-tags", "rename-tag", "remove-tag", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         def _item_suggestions(self) -> List[str]:
@@ -393,6 +393,11 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]get [path][/cyan]       - Fetch and display content")
                 CONSOLE.print("  [cyan]items [path][/cyan]     - List items array")
                 CONSOLE.print("  [cyan]raw [path][/cyan]      - Show raw JSON")
+                CONSOLE.print("\n[bold]Tags:[/bold]")
+                CONSOLE.print("  [cyan]tags [path][/cyan]     - List all tags with frequency")
+                CONSOLE.print("  [cyan]merge-tags <old> <new>[/cyan] - Merge two tags")
+                CONSOLE.print("  [cyan]rename-tag <old> <new>[/cyan] - Rename a tag")
+                CONSOLE.print("  [cyan]remove-tag <tag>[/cyan] - Remove a tag from all items")
                 CONSOLE.print("\n[bold]File Operations:[/bold]")
                 CONSOLE.print("  [cyan]rename <new_name>[/cyan] - Rename current item")
                 CONSOLE.print("  [cyan]cp <source> <dest>[/cyan] - Copy item")
@@ -508,6 +513,101 @@ def cmd_repl(
                         CONSOLE.print(table)
                 except Exception as e:
                     CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "tags":
+                path = args[0] if args else current_path
+                try:
+                    tag_counts = api.get_all_tags(resolved_base, path, no_auth=False)
+                    if not tag_counts:
+                        CONSOLE.print("[yellow]No tags found.[/yellow]")
+                    else:
+                        sorted_tags = sorted(tag_counts.items(), key=lambda x: (-x[1], x[0].lower()))
+                        table = Table(title=f"Tags ({len(tag_counts)} unique)", box=box.MINIMAL_DOUBLE_HEAD)
+                        table.add_column("Tag", style="bold")
+                        table.add_column("Count", style="cyan", justify="right")
+                        for tag, count in sorted_tags:
+                            table.add_row(tag, str(count))
+                        CONSOLE.print(table)
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "merge-tags":
+                if len(args) < 2:
+                    CONSOLE.print("[red]Error:[/red] merge-tags requires two arguments: old_tag new_tag")
+                else:
+                    old_tag, new_tag = args[0], args[1]
+                    try:
+                        items = api.search_by_subject(resolved_base, old_tag, current_path, no_auth=False)
+                        if not items:
+                            CONSOLE.print(f"[yellow]No items found with tag '{old_tag}'.[/yellow]")
+                        else:
+                            CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{old_tag}'[/cyan]")
+                            if typer.confirm(f"Merge '{old_tag}' into '{new_tag}' on {len(items)} item(s)?"):
+                                updated = 0
+                                for item in items:
+                                    try:
+                                        item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
+                                        current_tags = item.get("subjects", [])
+                                        new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
+                                        if new_tag not in new_tags:
+                                            new_tags.append(new_tag)
+                                        api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=False)
+                                        updated += 1
+                                    except Exception:
+                                        pass
+                                CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "rename-tag":
+                if len(args) < 2:
+                    CONSOLE.print("[red]Error:[/red] rename-tag requires two arguments: old_tag new_tag")
+                else:
+                    old_tag, new_tag = args[0], args[1]
+                    try:
+                        items = api.search_by_subject(resolved_base, old_tag, current_path, no_auth=False)
+                        if not items:
+                            CONSOLE.print(f"[yellow]No items found with tag '{old_tag}'.[/yellow]")
+                        else:
+                            CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{old_tag}'[/cyan]")
+                            if typer.confirm(f"Rename tag '{old_tag}' to '{new_tag}' on {len(items)} item(s)?"):
+                                updated = 0
+                                for item in items:
+                                    try:
+                                        item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
+                                        current_tags = item.get("subjects", [])
+                                        new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
+                                        if new_tag not in new_tags:
+                                            new_tags.append(new_tag)
+                                        api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=False)
+                                        updated += 1
+                                    except Exception:
+                                        pass
+                                CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "remove-tag":
+                if not args:
+                    CONSOLE.print("[red]Error:[/red] remove-tag requires a tag name")
+                else:
+                    tag = args[0]
+                    try:
+                        items = api.search_by_subject(resolved_base, tag, current_path, no_auth=False)
+                        if not items:
+                            CONSOLE.print(f"[yellow]No items found with tag '{tag}'.[/yellow]")
+                        else:
+                            CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{tag}'[/cyan]")
+                            if typer.confirm(f"Remove tag '{tag}' from {len(items)} item(s)?"):
+                                updated = 0
+                                for item in items:
+                                    try:
+                                        item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
+                                        current_tags = item.get("subjects", [])
+                                        new_tags = [t for t in current_tags if t != tag]
+                                        api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=False)
+                                        updated += 1
+                                    except Exception:
+                                        pass
+                                CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
             else:
                 CONSOLE.print(f"[red]Unknown command:[/red] {cmd}. Type 'help' for available commands.")
         except KeyboardInterrupt:
@@ -532,6 +632,166 @@ def cmd_logout() -> None:
         CONSOLE.print(f"[yellow]Removed saved credentials at {CONFIG_FILE}[/yellow]")
     else:
         CONSOLE.print("No saved credentials found.")
+
+
+@APP.command("tags")
+def cmd_tags(
+    path: str = typer.Argument("", help="Path to analyze (defaults to current/root)."),
+    base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
+    recursive: bool = typer.Option(False, "--recursive", "-r", help="Include tags from subdirectories."),
+    no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
+) -> None:
+    """List all tags/subjects with their frequency."""
+    resolved_base = get_base_url(base)
+    try:
+        tag_counts = api.get_all_tags(resolved_base, path, no_auth=no_auth)
+        if not tag_counts:
+            CONSOLE.print("[yellow]No tags found.[/yellow]")
+            return
+        
+        # Sort by frequency (descending) then alphabetically
+        sorted_tags = sorted(tag_counts.items(), key=lambda x: (-x[1], x[0].lower()))
+        
+        table = Table(title=f"Tags ({len(tag_counts)} unique)", box=box.MINIMAL_DOUBLE_HEAD)
+        table.add_column("Tag", style="bold")
+        table.add_column("Count", style="cyan", justify="right")
+        
+        for tag, count in sorted_tags:
+            table.add_row(tag, str(count))
+        
+        CONSOLE.print(table)
+    except api.APIError as e:
+        raise CliError(str(e)) from e
+
+
+@APP.command("merge-tags")
+def cmd_merge_tags(
+    old_tag: str = typer.Argument(..., help="Tag to merge from (will be removed)."),
+    new_tag: str = typer.Argument(..., help="Tag to merge into (will be kept)."),
+    path: str = typer.Option("", "--path", help="Limit to items in this path."),
+    base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be changed without making changes."),
+    no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
+) -> None:
+    """Merge one tag into another (replaces old_tag with new_tag on all items)."""
+    resolved_base = get_base_url(base)
+    try:
+        items = api.search_by_subject(resolved_base, old_tag, path, no_auth=no_auth)
+        if not items:
+            CONSOLE.print(f"[yellow]No items found with tag '{old_tag}'.[/yellow]")
+            return
+        
+        CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{old_tag}'[/cyan]")
+        
+        if dry_run:
+            CONSOLE.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+            for item in items[:10]:  # Show first 10
+                title = item.get("title", item.get("id", "—"))
+                current_tags = item.get("subjects", [])
+                new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
+                if new_tag not in new_tags:
+                    new_tags.append(new_tag)
+                CONSOLE.print(f"  {title}: {current_tags} → {new_tags}")
+            if len(items) > 10:
+                CONSOLE.print(f"  ... and {len(items) - 10} more")
+            return
+        
+        # Confirm
+        if not typer.confirm(f"Merge '{old_tag}' into '{new_tag}' on {len(items)} item(s)?"):
+            raise typer.Exit(0)
+        
+        updated = 0
+        errors = 0
+        
+        for item in items:
+            try:
+                item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
+                current_tags = item.get("subjects", [])
+                # Replace old_tag with new_tag, ensure new_tag exists
+                new_tags = [new_tag if tag == old_tag else tag for tag in current_tags]
+                if new_tag not in new_tags:
+                    new_tags.append(new_tag)
+                
+                api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=no_auth)
+                updated += 1
+            except Exception as e:
+                errors += 1
+                CONSOLE.print(f"[red]Error updating {item.get('title', 'item')}: {e}[/red]")
+        
+        CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+        if errors:
+            CONSOLE.print(f"[yellow]{errors} error(s) occurred[/yellow]")
+    except api.APIError as e:
+        raise CliError(str(e)) from e
+
+
+@APP.command("rename-tag")
+def cmd_rename_tag(
+    old_tag: str = typer.Argument(..., help="Tag to rename."),
+    new_tag: str = typer.Argument(..., help="New tag name."),
+    path: str = typer.Option("", "--path", help="Limit to items in this path."),
+    base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be changed without making changes."),
+    no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
+) -> None:
+    """Rename a tag (same as merge-tags but removes old tag)."""
+    # This is essentially the same as merge-tags
+    cmd_merge_tags(old_tag, new_tag, path, base, dry_run, no_auth)
+
+
+@APP.command("remove-tag")
+def cmd_remove_tag(
+    tag: str = typer.Argument(..., help="Tag to remove."),
+    path: str = typer.Option("", "--path", help="Limit to items in this path."),
+    base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be changed without making changes."),
+    no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
+) -> None:
+    """Remove a tag from all items."""
+    resolved_base = get_base_url(base)
+    try:
+        items = api.search_by_subject(resolved_base, tag, path, no_auth=no_auth)
+        if not items:
+            CONSOLE.print(f"[yellow]No items found with tag '{tag}'.[/yellow]")
+            return
+        
+        CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{tag}'[/cyan]")
+        
+        if dry_run:
+            CONSOLE.print("[yellow]DRY RUN - No changes will be made[/yellow]")
+            for item in items[:10]:  # Show first 10
+                title = item.get("title", item.get("id", "—"))
+                current_tags = item.get("subjects", [])
+                new_tags = [t for t in current_tags if t != tag]
+                CONSOLE.print(f"  {title}: {current_tags} → {new_tags}")
+            if len(items) > 10:
+                CONSOLE.print(f"  ... and {len(items) - 10} more")
+            return
+        
+        # Confirm
+        if not typer.confirm(f"Remove tag '{tag}' from {len(items)} item(s)?"):
+            raise typer.Exit(0)
+        
+        updated = 0
+        errors = 0
+        
+        for item in items:
+            try:
+                item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
+                current_tags = item.get("subjects", [])
+                new_tags = [t for t in current_tags if t != tag]
+                
+                api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=no_auth)
+                updated += 1
+            except Exception as e:
+                errors += 1
+                CONSOLE.print(f"[red]Error updating {item.get('title', 'item')}: {e}[/red]")
+        
+        CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
+        if errors:
+            CONSOLE.print(f"[yellow]{errors} error(s) occurred[/yellow]")
+    except api.APIError as e:
+        raise CliError(str(e)) from e
 
 
 @APP.command("web")

@@ -173,6 +173,28 @@ The config file stores:
 - `base` - Default API base URL
 - `auth` - Authentication token (from `login` command)
 
+## Publishing to PyPI
+
+The default setuptools metadata currently adds fields (`license-file`, `license-expression`) that PyPI rejects. Run the helper script so the build artifacts are fixed automatically:
+
+```bash
+# Build wheel + sdist and scrub the metadata
+python fix_metadata.py
+
+# Only rebuild the sdist, if needed
+python fix_metadata.py -- --sdist
+
+# Skip building (only clean existing artifacts)
+python fix_metadata.py --skip-build
+```
+
+After running the script, upload as usual:
+
+```bash
+twine check dist/*
+twine upload dist/*
+```
+
 ## Commands
 
 ### `get [PATH]`
