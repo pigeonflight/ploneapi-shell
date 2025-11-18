@@ -190,6 +190,26 @@ Copyright (c) 2025 David Bain
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+## Acknowledgments
+
+This tool is built on top of the **Plone REST API** (`plone.restapi`), which provides the foundation for all API interactions. We are grateful to the Plone REST API team and the broader Plone community for their incredible work.
+
+### Plone REST API
+
+The Plone REST API was developed by the Plone community, with significant contributions from:
+- The Plone Foundation and its members
+- The global Plone developer community
+- All contributors to the `plone.restapi` package
+
+### Plone
+
+Plone itself was initiated in 1999 by **Alexander Limi**, **Alan Runyan**, and **Vidar Andersen**, and has been developed and maintained by a dedicated global community of developers, designers, and advocates.
+
+For more information about the Plone community and contributors, visit:
+- [Plone Foundation](https://plone.org/foundation)
+- [Plone REST API Documentation](https://plonerestapi.readthedocs.io/)
+- [Plone GitHub Organization](https://github.com/plone)
+
 ## Author
 
 David Bain ([@pigeonflight](https://x.com/pigeonflight) on X)
