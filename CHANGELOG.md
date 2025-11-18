@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2025-11-18
+
+### Added
+- **Similar tags command**: New `similar-tags` command to find tags similar to a given tag using fuzzy matching
+  - Uses thefuzz library for intelligent tag similarity detection
+  - Configurable similarity threshold (default: 70%)
+  - Shows tag name, frequency, and similarity score
+  - Available in both CLI and REPL: `ploneapi-shell similar-tags <tag> [--threshold 70]`
+- **Improved tags command**: Now uses search endpoint instead of browsing, finding tags across all items
+  - Handles pagination to collect tags from large sites
+  - More reliable tag discovery across the entire site or specific paths
+
+### Fixed
+- Fixed `tags` command returning "No tags found" when tags exist elsewhere in the site
+
 ## [0.1.3] - 2025-11-18
 
 ### Fixed

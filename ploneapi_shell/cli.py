@@ -296,7 +296,7 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "merge-tags", "rename-tag", "remove-tag", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         def _item_suggestions(self) -> List[str]:
@@ -395,6 +395,7 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]raw [path][/cyan]      - Show raw JSON")
                 CONSOLE.print("\n[bold]Tags:[/bold]")
                 CONSOLE.print("  [cyan]tags [path][/cyan]     - List all tags with frequency")
+                CONSOLE.print("  [cyan]similar-tags [tag] [threshold][/cyan] - Find similar tags (no tag = find all similar pairs, default threshold: 70)")
                 CONSOLE.print("  [cyan]merge-tags <old> <new>[/cyan] - Merge two tags")
                 CONSOLE.print("  [cyan]rename-tag <old> <new>[/cyan] - Rename a tag")
                 CONSOLE.print("  [cyan]remove-tag <tag>[/cyan] - Remove a tag from all items")
@@ -529,6 +530,52 @@ def cmd_repl(
                         CONSOLE.print(table)
                 except Exception as e:
                     CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "similar-tags":
+                # Parse arguments: [tag] [threshold] or [threshold] if first arg is a number
+                query_tag = None
+                threshold = 70
+                if args:
+                    if args[0].isdigit():
+                        # First arg is a threshold number
+                        threshold = int(args[0])
+                    else:
+                        # First arg is a tag
+                        query_tag = args[0]
+                        if len(args) > 1 and args[1].isdigit():
+                            threshold = int(args[1])
+                path = current_path
+                try:
+                    similar_tags = api.find_similar_tags(resolved_base, query_tag, path, threshold, no_auth=False)
+                    if not similar_tags:
+                        if query_tag:
+                            CONSOLE.print(f"[yellow]No tags found similar to '{query_tag}' (threshold: {threshold}).[/yellow]")
+                        else:
+                            CONSOLE.print(f"[yellow]No similar tag pairs found (threshold: {threshold}).[/yellow]")
+                    else:
+                        if query_tag:
+                            table = Table(
+                                title=f"Tags similar to '{query_tag}' ({len(similar_tags)} found)",
+                                box=box.MINIMAL_DOUBLE_HEAD
+                            )
+                            table.add_column("Tag", style="bold")
+                            table.add_column("Count", style="cyan", justify="right")
+                            table.add_column("Similarity", style="green", justify="right")
+                            for tag, count, similarity, _ in similar_tags:
+                                table.add_row(tag, str(count), f"{similarity}%")
+                        else:
+                            table = Table(
+                                title=f"Similar Tag Pairs ({len(similar_tags)} found)",
+                                box=box.MINIMAL_DOUBLE_HEAD
+                            )
+                            table.add_column("Tag", style="bold")
+                            table.add_column("Count", style="cyan", justify="right")
+                            table.add_column("Similarity", style="green", justify="right")
+                            table.add_column("Similar To", style="yellow")
+                            for tag, count, similarity, matched_tag in similar_tags:
+                                table.add_row(tag, str(count), f"{similarity}%", matched_tag)
+                        CONSOLE.print(table)
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "merge-tags":
                 if len(args) < 2:
                     CONSOLE.print("[red]Error:[/red] merge-tags requires two arguments: old_tag new_tag")
@@ -640,13 +687,24 @@ def cmd_tags(
     base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
     recursive: bool = typer.Option(False, "--recursive", "-r", help="Include tags from subdirectories."),
     no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
+    debug: bool = typer.Option(False, "--debug", help="Show debug information about tag collection."),
 ) -> None:
     """List all tags/subjects with their frequency."""
     resolved_base = get_base_url(base)
     try:
-        tag_counts = api.get_all_tags(resolved_base, path, no_auth=no_auth)
+        if debug:
+            CONSOLE.print(f"[dim]Debug: Searching for tags in path: '{path or '(root)'}'[/dim]")
+            CONSOLE.print(f"[dim]Debug: Base URL: {resolved_base}[/dim]")
+        
+        tag_counts = api.get_all_tags(resolved_base, path, no_auth=no_auth, debug=debug)
+        
+        if debug:
+            CONSOLE.print(f"[dim]Debug: Found {len(tag_counts)} unique tags[/dim]")
+        
         if not tag_counts:
             CONSOLE.print("[yellow]No tags found.[/yellow]")
+            if debug:
+                CONSOLE.print("[dim]Debug: Try fetching a specific item to see its structure: ploneapi-shell get /some-item --raw[/dim]")
             return
         
         # Sort by frequency (descending) then alphabetically
@@ -790,6 +848,54 @@ def cmd_remove_tag(
         CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
         if errors:
             CONSOLE.print(f"[yellow]{errors} error(s) occurred[/yellow]")
+    except api.APIError as e:
+        raise CliError(str(e)) from e
+
+
+@APP.command("similar-tags")
+def cmd_similar_tags(
+    query_tag: Optional[str] = typer.Argument(None, help="Tag to find similar matches for (optional - if omitted, finds all similar tag pairs)."),
+    path: str = typer.Option("", "--path", help="Limit search to items in this path."),
+    base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
+    threshold: int = typer.Option(70, "--threshold", "-t", help="Minimum similarity score (0-100). Default: 70."),
+    no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
+) -> None:
+    """Find tags similar to the given tag using fuzzy matching. If no tag is provided, finds all pairs of similar tags."""
+    resolved_base = get_base_url(base)
+    try:
+        similar_tags = api.find_similar_tags(resolved_base, query_tag, path, threshold, no_auth=no_auth)
+        if not similar_tags:
+            if query_tag:
+                CONSOLE.print(f"[yellow]No tags found similar to '{query_tag}' (threshold: {threshold}).[/yellow]")
+            else:
+                CONSOLE.print(f"[yellow]No similar tag pairs found (threshold: {threshold}).[/yellow]")
+            return
+        
+        if query_tag:
+            table = Table(
+                title=f"Tags similar to '{query_tag}' ({len(similar_tags)} found)",
+                box=box.MINIMAL_DOUBLE_HEAD
+            )
+            table.add_column("Tag", style="bold")
+            table.add_column("Count", style="cyan", justify="right")
+            table.add_column("Similarity", style="green", justify="right")
+            
+            for tag, count, similarity, _ in similar_tags:
+                table.add_row(tag, str(count), f"{similarity}%")
+        else:
+            table = Table(
+                title=f"Similar Tag Pairs ({len(similar_tags)} found)",
+                box=box.MINIMAL_DOUBLE_HEAD
+            )
+            table.add_column("Tag", style="bold")
+            table.add_column("Count", style="cyan", justify="right")
+            table.add_column("Similarity", style="green", justify="right")
+            table.add_column("Similar To", style="yellow")
+            
+            for tag, count, similarity, matched_tag in similar_tags:
+                table.add_row(tag, str(count), f"{similarity}%", matched_tag)
+        
+        CONSOLE.print(table)
     except api.APIError as e:
         raise CliError(str(e)) from e
 
