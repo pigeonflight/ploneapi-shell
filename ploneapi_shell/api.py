@@ -235,3 +235,70 @@ def login(base: str, username: str, password: str) -> Dict[str, Any]:
     })
     return payload
 
+
+def search_by_subject(base: str, subject: str, path: str = "", no_auth: bool = False) -> List[Dict[str, Any]]:
+    """Search for items with a specific subject/tag."""
+    search_url = resolve_url("@search", base)
+    params = {
+        "Subject": subject,
+    }
+    if path:
+        params["path"] = path
+    
+    headers = apply_auth({}, base, no_auth)
+    try:
+        response = httpx.get(
+            search_url,
+            params=params,
+            headers=headers or None,
+            timeout=15,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise APIError(f"Search failed with status {exc.response.status_code}.") from exc
+    except httpx.RequestError as exc:
+        raise APIError(f"Unable to reach {search_url}: {exc}") from exc
+    
+    try:
+        data = response.json()
+        return data.get("items", [])
+    except ValueError:
+        return []
+
+
+def get_all_tags(base: str, path: str = "", no_auth: bool = False) -> Dict[str, int]:
+    """Get all tags/subjects with their frequency from items in a path."""
+    url, data = fetch(path, base, {}, {}, no_auth)
+    items = data.get("items", [])
+    
+    tag_counts: Dict[str, int] = {}
+    
+    def collect_tags(item: Dict[str, Any]) -> None:
+        """Recursively collect tags from item and its children."""
+        subjects = item.get("subjects", [])
+        for subject in subjects:
+            if subject:
+                tag_counts[subject] = tag_counts.get(subject, 0) + 1
+        
+        # Recursively process children if this is a container
+        if item.get("is_folderish"):
+            item_path = item.get("@id", "").replace(base.rstrip("/"), "").lstrip("/")
+            try:
+                _, child_data = fetch(item_path, base, {}, {}, no_auth)
+                child_items = child_data.get("items", [])
+                for child in child_items:
+                    collect_tags(child)
+            except Exception:
+                pass  # Skip if we can't access children
+    
+    for item in items:
+        collect_tags(item)
+    
+    return tag_counts
+
+
+def update_item_subjects(base: str, item_path: str, subjects: List[str], no_auth: bool = False) -> Dict[str, Any]:
+    """Update the subjects/tags of an item."""
+    url = resolve_url(item_path, base)
+    return patch(url, base, {"subjects": subjects}, {}, no_auth)[1]
+
