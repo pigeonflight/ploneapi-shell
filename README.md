@@ -442,6 +442,24 @@ List the `items` array from a container endpoint in a formatted table.
 ### `components`
 List all available `@components` endpoints from the API root.
 
+### `search <TYPE> [--path <PATH>]`
+Search for items by object type (portal_type). Useful for finding all items of a specific type across the site.
+
+**Examples:**
+```bash
+# Find all Document items
+ploneapi-shell search Document
+
+# Find all Folders in a specific path
+ploneapi-shell search Folder --path /news
+
+# In REPL
+plone> search Document
+plone> search Folder --path /news
+```
+
+The results are displayed in the same format as the `ls` command, showing title, ID, type, state, and modification date.
+
 ### `login`
 Authenticate with a Plone site and save the token. Prompts for username/password. The same command is available inside the REPL, so you can refresh credentials without leaving the shell. Tokens auto-renew in the background via `@login-renew`; manual `login` is only needed when renewal fails or you switch accounts.
 
