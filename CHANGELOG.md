@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.15] - 2025-11-19
+
+### Added
+- **Search by object type**: New `search` command to find items by their portal_type
+  - `search Document` - Find all Document items
+  - `search Folder --path /some/path` - Find Folders in a specific path
+  - Works in both CLI and REPL modes
+  - Results displayed using the same format as `ls` command
+  - Supports pagination for large result sets
+
+### Changed
+- **Improved `ls` output format**: Type information now integrated into the Title column
+  - Removed separate "Type" column for more compact display
+  - Format: `Title (id) [Type]` where title is bold, ID is dim, and type is cyan in brackets
+  - Makes better use of horizontal space while maintaining all information
+
+### Fixed
+- **Enhanced tag rename verification**: Improved verification logic in `merge-tags` command
+  - Now verifies that updates actually succeed (matches REPL behavior)
+  - Better error reporting when updates fail silently
+  - Fetches current item tags directly for more reliable updates
+  - Added small delay before verification to allow server processing
+- **Improved search pagination**: `search_by_subject` now handles pagination properly
+  - Can find more than 25 items when searching by tag
+  - Better handling of large result sets
+
+## [0.1.14] - 2025-11-19
+
+### Fixed
+- **Tag rename verification**: Added verification to `merge-tags` command to detect failed updates
+  - Verifies that old tags are removed and new tags are added
+  - Better error messages explaining why updates failed
+  - Improved tag fetching for more reliable updates
+
 ## [0.1.13] - 2025-11-19
 
 ### Fixed

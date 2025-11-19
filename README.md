@@ -88,6 +88,9 @@ Inside the shell, use filesystem-like commands:
 - `items [path]` - List items array
 - `raw [path]` - Show raw JSON
 - `components` - List available API components
+- `search <type> [--path <path>]` - Search for items by object type (portal_type)
+  - `search Document` - Find all Document items
+  - `search Folder --path /some/path` - Find Folders in a specific path
 - `tags [path]` - List all tags with frequency
 - `similar-tags [tag] [threshold]` - Find similar tags
   - `similar-tags swimming` - Find tags similar to "swimming" (default threshold: 70%)
