@@ -283,6 +283,141 @@ def create_app(allowed_origins: Optional[List[str]] = None) -> FastAPI:
         )
         return await merge_tags(merge_request)
 
+    class ExecuteCommandRequest(BaseModel):
+        command: str = Field(..., description="Command to execute (e.g., 'ls', 'cd /news', 'get /item')")
+        path: str = Field("", description="Current working path context")
+
+    @app.post("/api/execute")
+    async def execute_command(request: ExecuteCommandRequest = Body(...)) -> Dict:
+        """Execute a REPL command and return the result."""
+        import shlex
+        base = api.get_base_url(None)
+        current_path = request.path
+        
+        parts = shlex.split(request.command)
+        if not parts:
+            return {"success": False, "error": "Empty command", "output": "", "new_path": current_path}
+        
+        cmd = parts[0].lower()
+        args = parts[1:]
+        
+        try:
+            if cmd == "help":
+                help_text = """
+Navigation:
+  ls [path] - List items in current directory
+  cd <path> - Change directory (use '..' to go up)
+  pwd - Show current path
+
+Content:
+  get [path] - Fetch and display content
+  items [path] - List items array
+  raw [path] - Show raw JSON response
+
+Tags:
+  tags [path] - List all tags with frequency
+  similar-tags [tag] [threshold] - Find similar tags
+
+Other:
+  components - List available components
+                """
+                return {"success": True, "output": help_text.strip(), "new_path": current_path}
+            
+            elif cmd == "pwd":
+                path_display = current_path if current_path else "/"
+                return {"success": True, "output": path_display, "new_path": current_path}
+            
+            elif cmd == "cd":
+                if not args:
+                    return {"success": False, "error": "cd requires a path", "output": "", "new_path": current_path}
+                new_path = args[0]
+                if new_path == "..":
+                    # Go up one level
+                    if current_path:
+                        parts = current_path.rstrip("/").split("/")
+                        new_path = "/".join(parts[:-1]) if len(parts) > 1 else ""
+                    else:
+                        new_path = ""
+                elif new_path.startswith("/"):
+                    new_path = new_path.lstrip("/")
+                else:
+                    # Relative path
+                    if current_path:
+                        new_path = f"{current_path.rstrip('/')}/{new_path}"
+                    else:
+                        new_path = new_path
+                return {"success": True, "output": f"Changed to: /{new_path}", "new_path": new_path}
+            
+            elif cmd == "ls":
+                target_path = args[0] if args else current_path
+                url, data = api.fetch(target_path, base, headers={}, params={}, no_auth=False)
+                items = data.get("items", [])
+                if not items:
+                    return {"success": True, "output": "No items found", "new_path": current_path}
+                output_lines = [f"Found {len(items)} items:"]
+                for item in items[:50]:  # Limit to 50 items
+                    title = item.get("title") or item.get("id", "untitled")
+                    item_type = item.get("@type", "unknown")
+                    output_lines.append(f"  {title} ({item_type})")
+                if len(items) > 50:
+                    output_lines.append(f"  ... and {len(items) - 50} more")
+                return {"success": True, "output": "\n".join(output_lines), "new_path": current_path, "url": url}
+            
+            elif cmd == "get":
+                target_path = args[0] if args else current_path
+                url, data = api.fetch(target_path, base, headers={}, params={}, no_auth=False)
+                title = data.get("title", data.get("id", "untitled"))
+                item_type = data.get("@type", "unknown")
+                output_lines = [
+                    f"Title: {title}",
+                    f"Type: {item_type}",
+                    f"URL: {url}"
+                ]
+                if data.get("description"):
+                    output_lines.append(f"Description: {data.get('description')}")
+                return {"success": True, "output": "\n".join(output_lines), "new_path": current_path, "url": url, "data": data}
+            
+            elif cmd == "items":
+                target_path = args[0] if args else current_path
+                url, data = api.fetch(target_path, base, headers={}, params={}, no_auth=False)
+                items = data.get("items", [])
+                if not items:
+                    return {"success": True, "output": "No items array found", "new_path": current_path}
+                output_lines = [f"Items ({len(items)}):"]
+                for item in items[:20]:
+                    title = item.get("title") or item.get("id", "untitled")
+                    output_lines.append(f"  - {title}")
+                if len(items) > 20:
+                    output_lines.append(f"  ... and {len(items) - 20} more")
+                return {"success": True, "output": "\n".join(output_lines), "new_path": current_path, "url": url}
+            
+            elif cmd == "raw":
+                target_path = args[0] if args else current_path
+                url, data = api.fetch(target_path, base, headers={}, params={}, no_auth=False)
+                import json
+                return {"success": True, "output": json.dumps(data, indent=2), "new_path": current_path, "url": url}
+            
+            elif cmd == "tags":
+                target_path = args[0] if args else current_path
+                tag_counts = await asyncio.to_thread(api.get_all_tags, base, target_path, False, False, None, None)
+                if not tag_counts:
+                    return {"success": True, "output": "No tags found", "new_path": current_path}
+                sorted_tags = sorted(tag_counts.items(), key=lambda x: (-x[1], x[0].lower()))
+                output_lines = [f"Tags ({len(tag_counts)} unique):"]
+                for tag, count in sorted_tags[:50]:
+                    output_lines.append(f"  {tag}: {count}")
+                if len(sorted_tags) > 50:
+                    output_lines.append(f"  ... and {len(sorted_tags) - 50} more")
+                return {"success": True, "output": "\n".join(output_lines), "new_path": current_path}
+            
+            else:
+                return {"success": False, "error": f"Unknown command: {cmd}. Type 'help' for available commands.", "output": "", "new_path": current_path}
+        
+        except api.APIError as exc:
+            return {"success": False, "error": str(exc), "output": "", "new_path": current_path}
+        except Exception as exc:
+            return {"success": False, "error": f"Error: {str(exc)}", "output": "", "new_path": current_path}
+
     @app.post("/api/tags/remove")
     async def remove_tag(request: RemoveTagRequest = Body(...)) -> Dict:
         base = api.get_base_url(None)

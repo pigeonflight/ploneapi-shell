@@ -27,5 +27,8 @@
     "svelte-check": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^7.1.10"
+  },
+  "dependencies": {
+    "lucide-svelte": "^0.554.0"
   }
 }

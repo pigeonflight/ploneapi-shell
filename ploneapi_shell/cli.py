@@ -294,12 +294,20 @@ def cmd_login(
 @APP.command("repl")
 def cmd_repl(
     base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL (defaults to saved config or demo site)."),
+    yes: bool = typer.Option(False, "-y", "--yes", help="Automatically answer 'yes' to all confirmation prompts."),
 ) -> None:
     """Launch interactive shell with filesystem-like navigation."""
     if not sys.stdin.isatty() or not sys.stdout.isatty():
         raise CliError("The REPL requires an interactive terminal. Run this command directly in a shell.")
     resolved_base = get_base_url(base)
     current_path = ""
+    
+    # Helper function for confirmations that respects -y flag
+    def confirm_prompt(message: str) -> bool:
+        """Show confirmation prompt, respecting -y flag."""
+        if yes:
+            return True
+        return typer.confirm(message, default=True)
     
     # Load history - ensure directory exists
     history = None
@@ -309,7 +317,7 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "connect", "login", "logout", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "blocks", "show-block", "delete-block", "move-block", "connect", "login", "logout", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         _tag_cache: Optional[List[str]] = None
@@ -408,6 +416,59 @@ def cmd_repl(
 
             cmd = parts[0]
             
+            # Helper function to handle path autocompletion
+            def handle_path_completion(cmd_name: str, required_args_before_path: int = 0):
+                """Handle path autocompletion for commands that take an optional path argument.
+                
+                Args:
+                    cmd_name: The command name
+                    required_args_before_path: Number of required arguments before the optional path
+                """
+                if len(parts) > required_args_before_path:
+                    # Extract the path argument from the text
+                    arg_start = text.find(cmd_name, 0) + len(cmd_name)
+                    if arg_start < len(text):
+                        # Skip required arguments to get to the path
+                        path_text = text[arg_start:].lstrip()
+                        # Skip required arguments (they're already typed)
+                        for _ in range(required_args_before_path):
+                            if " " in path_text:
+                                path_text = path_text.split(" ", 1)[1].lstrip()
+                        
+                        if path_text:  # Only autocomplete if there's something to complete
+                            # Handle deep paths: if path contains "/", extract directory and prefix
+                            if "/" in path_text:
+                                # Split path: "files/mystuff/here" -> dir="files/mystuff", prefix="here"
+                                path_parts = path_text.rsplit("/", 1)
+                                if len(path_parts) == 2:
+                                    dir_path, prefix = path_parts
+                                    suggestions = self._item_suggestions(dir_path)
+                                    # Only suggest items that start with the prefix
+                                    for suggestion in suggestions:
+                                        if suggestion.startswith(prefix):
+                                            # Return the full path including the directory
+                                            full_suggestion = f"{dir_path}/{suggestion}"
+                                            yield Completion(full_suggestion, start_position=-len(path_text))
+                                else:
+                                    # Just a trailing slash, suggest from the directory
+                                    dir_path = path_text.rstrip("/")
+                                    suggestions = self._item_suggestions(dir_path)
+                                    for suggestion in suggestions:
+                                        full_suggestion = f"{dir_path}/{suggestion}"
+                                        yield Completion(full_suggestion, start_position=-len(path_text))
+                            else:
+                                # Simple case: no slashes, just suggest from current directory
+                                suggestions = self._item_suggestions()
+                                prefix = path_text if not has_trailing_space else ""
+                                for suggestion in suggestions:
+                                    if suggestion.startswith(prefix):
+                                        yield Completion(suggestion, start_position=-len(path_text))
+                elif len(parts) == required_args_before_path:
+                    # All required args provided, suggest paths from current directory
+                    suggestions = self._item_suggestions()
+                    for suggestion in suggestions:
+                        yield Completion(suggestion, start_position=0)
+            
             # Item suggestions for navigation/content commands
             if cmd in ("cd", "get", "items", "raw"):
                 # Get the full path argument being typed (not just the last word)
@@ -453,6 +514,42 @@ def cmd_repl(
                     suggestions = self._item_suggestions()
                     for suggestion in suggestions:
                         yield Completion(suggestion, start_position=0)
+            
+            # Block commands with optional path argument
+            elif cmd == "blocks":
+                # blocks [path] - path is optional, last argument
+                yield from handle_path_completion("blocks", 0)
+            
+            elif cmd == "show-block":
+                # show-block <id> [path] - path is optional, comes after block ID
+                if len(parts) > 1:
+                    # We have at least the block ID, check if we're typing a path
+                    if len(parts) > 2 or (len(parts) == 2 and has_trailing_space):
+                        # We have a path argument (or space after block ID)
+                        yield from handle_path_completion("show-block", 1)
+            
+            elif cmd == "delete-block":
+                # delete-block <id> [path] - path is optional, comes after block ID
+                if len(parts) > 1:
+                    # We have at least the block ID, check if we're typing a path
+                    if len(parts) > 2 or (len(parts) == 2 and has_trailing_space):
+                        # We have a path argument (or space after block ID)
+                        yield from handle_path_completion("delete-block", 1)
+            
+            elif cmd == "move-block":
+                # move-block <id> <direction> [path] - path is optional, comes after direction
+                # Special case: if direction is "to", path comes after position number
+                if len(parts) > 2:
+                    # We have block ID and direction, check if we're typing a path
+                    direction = parts[2].lower() if len(parts) > 2 else ""
+                    if direction == "to" and len(parts) > 3:
+                        # move-block <id> to <pos> [path] - path comes after position
+                        if len(parts) > 4 or (len(parts) == 4 and has_trailing_space):
+                            yield from handle_path_completion("move-block", 3)
+                    elif direction != "to":
+                        # move-block <id> <up|down> [path] - path comes after direction
+                        if len(parts) > 3 or (len(parts) == 3 and has_trailing_space):
+                            yield from handle_path_completion("move-block", 2)
             
             # Tag suggestions for tag management commands
             elif cmd in ("merge-tags", "rename-tag", "remove-tag", "similar-tags"):
@@ -524,6 +621,16 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]search <type> [--path <path>][/cyan] - Search for items by object type")
                 CONSOLE.print("    Example: search Document (finds all Document items)")
                 CONSOLE.print("    Example: search Folder --path /some/path (finds Folders in specific path)")
+                CONSOLE.print("\n[bold]Blocks (Plone 6):[/bold]")
+                CONSOLE.print("  [cyan]blocks [path][/cyan]        - List all blocks in an item")
+                CONSOLE.print("  [cyan]show-block <id|partial> [path][/cyan] - Show details of a specific block")
+                CONSOLE.print("  [cyan]delete-block <id|partial> [path][/cyan] - Delete a block from an item")
+                CONSOLE.print("  [cyan]move-block <id|partial> <up|down|to <pos>> [path][/cyan] - Move a block")
+                CONSOLE.print("    Examples: move-block abc123 up")
+                CONSOLE.print("              move-block abc up my-item (partial ID with path)")
+                CONSOLE.print("              move-block abc123 down")
+                CONSOLE.print("              move-block abc123 to 0 (move to first position)")
+                CONSOLE.print("              move-block abc to 0 my-item (partial ID, position, path)")
                 CONSOLE.print("\n[bold]Tags:[/bold]")
                 CONSOLE.print("  [cyan]tags [path][/cyan]     - List all tags with frequency")
                 CONSOLE.print("  [cyan]similar-tags [tag] [threshold][/cyan] - Find similar tags")
@@ -813,7 +920,7 @@ def cmd_repl(
                                     CONSOLE.print(f"  - '{tag}': {count} item(s)")
                                 confirm_msg = f"Merge {len(source_tags)} tags into '{target_tag}' on {len(items_list)} item(s)?"
                             
-                            if typer.confirm(confirm_msg):
+                            if confirm_prompt(confirm_msg):
                                 updated = 0
                                 for item in items_list:
                                     try:
@@ -842,7 +949,7 @@ def cmd_repl(
                             CONSOLE.print(f"[yellow]No items found with tag '{old_tag}'.[/yellow]")
                         else:
                             CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{old_tag}'[/cyan]")
-                            if typer.confirm(f"Rename tag '{old_tag}' to '{new_tag}' on {len(items)} item(s)?"):
+                            if confirm_prompt(f"Rename tag '{old_tag}' to '{new_tag}' on {len(items)} item(s)?"):
                                 updated = 0
                                 errors = 0
                                 for item in items:
@@ -1028,7 +1135,7 @@ def cmd_repl(
                             CONSOLE.print(f"[yellow]No items found with tag '{tag}'.[/yellow]")
                         else:
                             CONSOLE.print(f"[cyan]Found {len(items)} item(s) with tag '{tag}'[/cyan]")
-                            if typer.confirm(f"Remove tag '{tag}' from {len(items)} item(s)?"):
+                            if confirm_prompt(f"Remove tag '{tag}' from {len(items)} item(s)?"):
                                 updated = 0
                                 for item in items:
                                     try:
@@ -1084,6 +1191,220 @@ def cmd_repl(
                     CONSOLE.print(f"[yellow]Removed saved credentials at {CONFIG_FILE}[/yellow]")
                 else:
                     CONSOLE.print("No saved credentials found.")
+            elif cmd == "blocks":
+                path = args[0] if args else current_path
+                try:
+                    _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                    blocks = data.get("blocks", {})
+                    blocks_layout = data.get("blocks_layout", {})
+                    
+                    if not blocks:
+                        CONSOLE.print("[dim]No blocks found in this item[/dim]")
+                    else:
+                        # Get the order from blocks_layout
+                        layout_items = []
+                        if isinstance(blocks_layout, dict) and "items" in blocks_layout:
+                            layout_items = blocks_layout["items"]
+                        elif isinstance(blocks_layout, list):
+                            layout_items = blocks_layout
+                        
+                        table = Table(title="Blocks", box=box.MINIMAL_DOUBLE_HEAD)
+                        table.add_column("#", style="dim", width=4)
+                        table.add_column("ID", style="bold")
+                        table.add_column("Type", style="cyan")
+                        table.add_column("Preview", overflow="fold")
+                        
+                        for idx, block_id in enumerate(layout_items):
+                            if block_id in blocks:
+                                block = blocks[block_id]
+                                block_type = block.get("@type", "unknown")
+                                # Try to get a preview
+                                preview = "—"
+                                if "text" in block:
+                                    preview = block["text"].get("plain", {}).get("plain", "")[:50] if isinstance(block["text"], dict) else str(block["text"])[:50]
+                                elif "title" in block:
+                                    preview = str(block["title"])[:50]
+                                else:
+                                    preview = str(block)[:50] + "..." if len(str(block)) > 50 else str(block)
+                                table.add_row(str(idx + 1), block_id, block_type, preview)
+                        
+                        CONSOLE.print(table)
+                except Exception as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "show-block":
+                if not args:
+                    CONSOLE.print("[red]Error:[/red] show-block requires a block ID (or partial ID)")
+                    CONSOLE.print("  Example: show-block abc123")
+                    CONSOLE.print("  Example: show-block abc my-item (with path)")
+                else:
+                    partial_id = args[0]
+                    path = args[1] if len(args) > 1 else current_path
+                    try:
+                        _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                        blocks = data.get("blocks", {})
+                        
+                        # Find block by partial ID
+                        matching_blocks = [bid for bid in blocks.keys() if bid.startswith(partial_id)]
+                        
+                        if not matching_blocks:
+                            CONSOLE.print(f"[yellow]No block found matching '{partial_id}'[/yellow]")
+                        elif len(matching_blocks) > 1:
+                            CONSOLE.print(f"[yellow]Multiple blocks match '{partial_id}':[/yellow]")
+                            for bid in matching_blocks:
+                                block_type = blocks[bid].get("@type", "unknown")
+                                CONSOLE.print(f"  - {bid} ({block_type})")
+                            CONSOLE.print(f"[yellow]Please use a more specific block ID[/yellow]")
+                        else:
+                            block_id = matching_blocks[0]
+                            block = blocks[block_id]
+                            CONSOLE.print(f"[green]Block:[/green] {block_id}")
+                            CONSOLE.print(JSON(json.dumps(block, indent=2)))
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "delete-block":
+                if not args:
+                    CONSOLE.print("[red]Error:[/red] delete-block requires a block ID (or partial ID)")
+                    CONSOLE.print("  Example: delete-block abc123")
+                    CONSOLE.print("  Example: delete-block abc my-item (with path)")
+                else:
+                    partial_id = args[0]
+                    path = args[1] if len(args) > 1 else current_path
+                    try:
+                        _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                        blocks = data.get("blocks", {})
+                        blocks_layout = data.get("blocks_layout", {})
+                        
+                        # Find block by partial ID
+                        matching_blocks = [bid for bid in blocks.keys() if bid.startswith(partial_id)]
+                        
+                        if not matching_blocks:
+                            CONSOLE.print(f"[yellow]No block found matching '{partial_id}'[/yellow]")
+                        elif len(matching_blocks) > 1:
+                            CONSOLE.print(f"[yellow]Multiple blocks match '{partial_id}':[/yellow]")
+                            for bid in matching_blocks:
+                                block_type = blocks[bid].get("@type", "unknown")
+                                CONSOLE.print(f"  - {bid} ({block_type})")
+                            CONSOLE.print(f"[yellow]Please use a more specific block ID[/yellow]")
+                        else:
+                            block_id = matching_blocks[0]
+                            # Get block type for confirmation message
+                            block_type = blocks[block_id].get("@type", "unknown")
+                            if confirm_prompt(f"Delete block '{block_id}' ({block_type})?"):
+                                # Remove from blocks dict
+                                new_blocks = {k: v for k, v in blocks.items() if k != block_id}
+                                
+                                # Remove from blocks_layout
+                                if isinstance(blocks_layout, dict) and "items" in blocks_layout:
+                                    new_layout = {"items": [bid for bid in blocks_layout["items"] if bid != block_id]}
+                                elif isinstance(blocks_layout, list):
+                                    new_layout = [bid for bid in blocks_layout if bid != block_id]
+                                else:
+                                    new_layout = {"items": []}
+                                
+                                # Update the item
+                                api.patch(path, resolved_base, {"blocks": new_blocks, "blocks_layout": new_layout}, {}, no_auth=False)
+                                CONSOLE.print(f"[green]Deleted block '{block_id}'[/green]")
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "move-block":
+                if len(args) < 2:
+                    CONSOLE.print("[red]Error:[/red] move-block requires a block ID (or partial ID) and direction")
+                    CONSOLE.print("  Examples: move-block abc123 up")
+                    CONSOLE.print("            move-block abc123 down")
+                    CONSOLE.print("            move-block abc123 to 0")
+                    CONSOLE.print("            move-block abc up my-item (with path)")
+                    CONSOLE.print("            move-block abc to 0 my-item (with path)")
+                else:
+                    partial_id = args[0]
+                    direction = args[1].lower()
+                    
+                    # Parse arguments: determine if last arg is a path
+                    # Format: move-block <id> <direction> [path]
+                    # Format: move-block <id> to <pos> [path]
+                    path = current_path
+                    if direction == "to":
+                        # move-block <id> to <pos> [path]
+                        if len(args) > 3:
+                            # Last arg is path
+                            path = args[3]
+                        elif len(args) == 3:
+                            # No path provided, use current_path
+                            pass
+                    else:
+                        # move-block <id> <up|down> [path]
+                        if len(args) > 2:
+                            # Last arg is path
+                            path = args[2]
+                    
+                    try:
+                        _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                        blocks = data.get("blocks", {})
+                        blocks_layout = data.get("blocks_layout", {})
+                        
+                        # Find block by partial ID
+                        matching_blocks = [bid for bid in blocks.keys() if bid.startswith(partial_id)]
+                        
+                        if not matching_blocks:
+                            CONSOLE.print(f"[yellow]No block found matching '{partial_id}'[/yellow]")
+                        elif len(matching_blocks) > 1:
+                            CONSOLE.print(f"[yellow]Multiple blocks match '{partial_id}':[/yellow]")
+                            for bid in matching_blocks:
+                                block_type = blocks[bid].get("@type", "unknown")
+                                CONSOLE.print(f"  - {bid} ({block_type})")
+                            CONSOLE.print(f"[yellow]Please use a more specific block ID[/yellow]")
+                        else:
+                            block_id = matching_blocks[0]
+                            
+                            # Get layout items
+                            layout_items = []
+                            if isinstance(blocks_layout, dict) and "items" in blocks_layout:
+                                layout_items = blocks_layout["items"].copy()
+                            elif isinstance(blocks_layout, list):
+                                layout_items = blocks_layout.copy()
+                            
+                            if block_id not in layout_items:
+                                CONSOLE.print(f"[yellow]Block '{block_id}' not found in layout[/yellow]")
+                            else:
+                                current_index = layout_items.index(block_id)
+                                
+                                if direction == "up":
+                                    if current_index == 0:
+                                        CONSOLE.print("[yellow]Block is already at the top[/yellow]")
+                                    else:
+                                        new_index = current_index - 1
+                                elif direction == "down":
+                                    if current_index == len(layout_items) - 1:
+                                        CONSOLE.print("[yellow]Block is already at the bottom[/yellow]")
+                                    else:
+                                        new_index = current_index + 1
+                                elif direction == "to" and len(args) > 2:
+                                    try:
+                                        new_index = int(args[2])
+                                        if new_index < 0 or new_index >= len(layout_items):
+                                            CONSOLE.print(f"[red]Error:[/red] Position must be between 0 and {len(layout_items) - 1}")
+                                            continue
+                                    except ValueError:
+                                        CONSOLE.print("[red]Error:[/red] Position must be a number")
+                                        continue
+                                else:
+                                    CONSOLE.print("[red]Error:[/red] Direction must be 'up', 'down', or 'to <position>'")
+                                    continue
+                                
+                                # Move the block
+                                layout_items.pop(current_index)
+                                layout_items.insert(new_index, block_id)
+                                
+                                # Update blocks_layout
+                                if isinstance(blocks_layout, dict):
+                                    new_layout = {"items": layout_items}
+                                else:
+                                    new_layout = layout_items
+                                
+                                # Update the item
+                                api.patch(path, resolved_base, {"blocks_layout": new_layout}, {}, no_auth=False)
+                                CONSOLE.print(f"[green]Moved block '{block_id}' to position {new_index + 1}[/green]")
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
             else:
                 CONSOLE.print(f"[red]Unknown command:[/red] {cmd}. Type 'help' for available commands.")
         except KeyboardInterrupt:

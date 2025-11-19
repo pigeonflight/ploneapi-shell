@@ -7,12 +7,17 @@ license = ""
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
+default-run = "app"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "test_server"
+path = "src/bin/test_server.rs"
 
 [build-dependencies]
 tauri-build = { version = "2.5.1", features = [] }
@@ -21,6 +26,22 @@ tauri-build = { version = "2.5.1", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
+env_logger = "0.11"
 tauri = { version = "2.9.2", features = [] }
 tauri-plugin-log = "2.0.0"
 tauri-plugin-shell = "2.0.0"
+# HTTP server
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+# Utilities
+base64 = "0.21"
+chrono = "0.4"
+strsim = "0.11"
+url = "2.5"
+dirs = "5.0"
+thiserror = "1.0"

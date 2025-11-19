@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.17] - 2025-01-XX
+
+### Added
+- **Auto-confirm mode**: New `-y`/`--yes` flag for REPL to automatically answer "yes" to all confirmation prompts
+  - Use `ploneapi-shell repl -y` to enable auto-confirm mode
+  - All confirmation prompts default to "yes" (Y/n instead of y/N)
+  - Makes batch operations much faster when you know you want to confirm everything
+- **Plone 6 block manipulation**: New commands for managing blocks in Plone 6 content items
+  - `blocks [path]` - List all blocks in an item with their order, type, and preview
+  - `show-block <id|partial> [path]` - Show full details of a specific block (supports partial block IDs)
+  - `delete-block <id|partial> [path]` - Delete a block from an item (supports partial block IDs, with confirmation)
+  - `move-block <id|partial> <up|down|to <pos>> [path]` - Move blocks up, down, or to a specific position
+  - Examples: `move-block abc123 up`, `move-block abc up my-item`, `move-block abc123 to 0` (move to first position)
+  - All block commands support partial block IDs (e.g., `abc` matches `abc123xyz` if unique)
+  - All block commands respect the `-y` flag for automatic confirmation
+  - Path autocompletion works for all block commands
+- **Path autocompletion for block commands**: Tab completion now works for paths in block commands
+  - Type `blocks test-video <tab>` to autocomplete to `blocks test-video-playback`
+  - Works with deep paths like `blocks files/myfolder/test <tab>`
+  - Suggests items from the current directory or the directory being typed
+
+### Changed
+- **Confirmation prompts default to "yes"**: All `typer.confirm()` calls in REPL now default to `True` (Y/n instead of y/N)
+  - Pressing Enter now confirms instead of canceling
+  - More convenient for users who typically want to proceed with operations
+  - Use `-y` flag for completely automatic confirmation
+- **Improved block command usability**: Block commands now support partial block IDs
+  - If multiple blocks match a partial ID, all matches are shown
+  - If only one block matches, it's used automatically
+  - Makes working with long block IDs much easier
+
 ## [0.1.15] - 2025-11-19
 
 ### Added
