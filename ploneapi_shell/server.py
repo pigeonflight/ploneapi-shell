@@ -14,6 +14,12 @@ from . import __version__ as PACKAGE_VERSION
 from . import api
 
 
+class LoginRequest(BaseModel):
+    base_url: str = Field(..., description="Plone API base URL (e.g., https://yoursite.com/++api++/)")
+    username: str = Field(..., description="Plone username")
+    password: str = Field(..., description="Plone password")
+
+
 def _serialize_item(item: Dict) -> Dict:
     """Return a subset of item fields that the UI cares about."""
     return {
@@ -46,6 +52,21 @@ def create_app(allowed_origins: Optional[List[str]] = None) -> FastAPI:
     async def get_config() -> Dict[str, str]:
         base = api.get_base_url(None)
         return {"base_url": base}
+
+    @app.post("/api/login")
+    async def login(request: LoginRequest = Body(...)) -> Dict[str, str]:
+        """Login to Plone site and save credentials."""
+        try:
+            api.login(request.base_url, request.username, request.password)
+            return {"status": "ok", "base_url": request.base_url}
+        except api.APIError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/logout")
+    async def logout() -> Dict[str, str]:
+        """Remove saved credentials."""
+        api.delete_config()
+        return {"status": "ok"}
 
     @app.get("/api/get")
     async def get_content(

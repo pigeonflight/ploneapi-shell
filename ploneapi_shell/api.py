@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse, urlunparse
+import time
 
 import httpx
 from thefuzz import fuzz
@@ -17,6 +20,10 @@ from thefuzz import fuzz
 CONFIG_ENV = os.environ.get("PLONEAPI_SHELL_CONFIG")
 CONFIG_FILE = Path(CONFIG_ENV).expanduser() if CONFIG_ENV else Path.home() / ".config" / "ploneapi_shell" / "config.json"
 DEFAULT_BASE = "https://demo.plone.org/++api++/"
+TOKEN_REFRESH_LEEWAY = 120  # seconds before expiry to proactively renew
+TOKEN_REFRESH_MIN_INTERVAL = 30  # avoid hammering renew endpoint
+LOCAL_HOST_PREFIXES = ("localhost", "127.", "0.0.0.0", "::1", "[::1]")
+IP_PATTERN = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
 class APIError(Exception):
@@ -90,21 +97,170 @@ def get_base_url(provided: Optional[str] = None) -> str:
     return DEFAULT_BASE
 
 
+def _infer_scheme(host: str) -> str:
+    """Choose http/https when user omitted scheme."""
+    host_lower = host.lower()
+    if host_lower.startswith(LOCAL_HOST_PREFIXES) or IP_PATTERN.match(host_lower):
+        return "http"
+    if ":" in host_lower and host_lower.split(":", 1)[0].startswith(LOCAL_HOST_PREFIXES):
+        return "http"
+    return "https"
+
+
+def normalize_base_input(raw: str) -> str:
+    """Normalize user-provided base URL and ensure it points at ++api++."""
+    if raw is None:
+        raise APIError("Base URL cannot be empty.")
+    text = raw.strip()
+    if not text:
+        raise APIError("Base URL cannot be empty.")
+
+    if "://" not in text:
+        # Assume user omitted scheme
+        host_fragment = text.split("/", 1)[0]
+        scheme = _infer_scheme(host_fragment)
+        text = f"{scheme}://{text}"
+
+    parsed = urlparse(text)
+    scheme = parsed.scheme or "https"
+    netloc = parsed.netloc or ""
+    path = parsed.path or ""
+
+    if not netloc:
+        # urlparse treats "http://example" differently than bare strings, but handle safety.
+        if parsed.path:
+            netloc = parsed.path
+            path = ""
+        else:
+            raise APIError("Could not determine host from base URL.")
+
+    # Ensure path points to ++api++
+    if "++api++" in path:
+        before, _ = path.split("++api++", 1)
+        before = before.rstrip("/")
+        path = f"{before}/++api++/"
+    else:
+        trimmed = path.rstrip("/")
+        if trimmed and trimmed != "/":
+            path = trimmed + "/++api++/"
+        else:
+            path = "/++api++/"
+
+    # Collapse duplicate slashes (without touching netloc)
+    while "//" in path:
+        path = path.replace("//", "/")
+
+    normalized = urlunparse((scheme, netloc, path, "", "", ""))
+    return normalized
+
+
+def verify_base_url(base: str) -> None:
+    """Attempt to fetch base URL to confirm it's reachable."""
+    url = resolve_url(None, base)
+    try:
+        response = httpx.get(url, timeout=10)
+    except httpx.RequestError as exc:
+        raise APIError(f"Unable to reach {url}: {exc}") from exc
+
+    if response.status_code in (200, 401):
+        # 200 OK or 401 Unauthorized (needs auth) are both acceptable
+        return
+
+    raise APIError(f"Base URL responded with status {response.status_code} for {url}")
+
+
+def _decode_jwt_exp(token: str) -> Optional[int]:
+    """Return exp timestamp from JWT token without verifying signature."""
+    try:
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+        payload_segment = parts[1]
+        padding = "=" * (-len(payload_segment) % 4)
+        payload_bytes = base64.urlsafe_b64decode(payload_segment + padding)
+        payload = json.loads(payload_bytes.decode("utf-8"))
+        exp = payload.get("exp")
+        return int(exp) if exp is not None else None
+    except Exception:
+        return None
+
+
+def _write_auth_config(base: str, auth_data: Dict[str, Any]) -> None:
+    """Persist auth block while preserving other config keys."""
+    config = load_config() or {}
+    config["base"] = base.rstrip("/")
+    config["auth"] = auth_data
+    save_config(config)
+
+
+def _save_token(base: str, token: str, username: Optional[str]) -> None:
+    """Save token plus metadata to config."""
+    auth_block: Dict[str, Any] = {
+        "mode": "token",
+        "token": token,
+        "updated_at": int(time.time()),
+    }
+    if username:
+        auth_block["username"] = username
+    token_exp = _decode_jwt_exp(token)
+    if token_exp:
+        auth_block["token_exp"] = token_exp
+    _write_auth_config(base, auth_block)
+
+
+def _should_refresh_token(auth: Dict[str, Any]) -> bool:
+    """Determine if token is close to expiry and needs refresh."""
+    token_exp = auth.get("token_exp")
+    if not token_exp:
+        return False
+    now = int(time.time())
+    if token_exp - TOKEN_REFRESH_LEEWAY <= now:
+        last_attempt = auth.get("updated_at", 0)
+        if now - last_attempt >= TOKEN_REFRESH_MIN_INTERVAL:
+            return True
+    return False
+
+
+def _renew_token(base: str, current_token: str, username: Optional[str]) -> Optional[str]:
+    """Call @login-renew to obtain a new token."""
+    renew_url = resolve_url("@login-renew", base)
+    headers = {"Authorization": f"Bearer {current_token}"}
+    try:
+        response = httpx.post(renew_url, headers=headers, timeout=15)
+        response.raise_for_status()
+        payload = response.json()
+        new_token = payload.get("token")
+        if new_token:
+            _save_token(base, new_token, username)
+            return new_token
+    except (httpx.HTTPStatusError, httpx.RequestError, ValueError):
+        # Silently ignore so callers can fall back to prompting for login.
+        pass
+    return None
+
+
 def get_saved_auth_headers(base: str) -> Dict[str, str]:
     """Get saved authentication headers for a base URL."""
     config = load_config()
     if not config:
         return {}
     saved_base = config.get("base")
-    if not saved_base:
-        return {}
-    if saved_base.rstrip("/") != base.rstrip("/"):
+    if not saved_base or saved_base.rstrip("/") != base.rstrip("/"):
         return {}
     auth = config.get("auth") or {}
     mode = auth.get("mode")
-    if mode == "token" and auth.get("token"):
-        return {"Authorization": f"Bearer {auth['token']}"}
-    return {}
+    token = auth.get("token")
+    if mode != "token" or not token:
+        return {}
+    if _should_refresh_token(auth):
+        refreshed = _renew_token(base, token, auth.get("username"))
+        if refreshed:
+            token = refreshed
+        else:
+            auth_copy = dict(auth)
+            auth_copy["updated_at"] = int(time.time())
+            _write_auth_config(base, auth_copy)
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def apply_auth(headers: Dict[str, str], base: str, no_auth: bool = False) -> Dict[str, str]:
@@ -267,27 +423,38 @@ def login(base: str, username: str, password: str) -> Dict[str, Any]:
     token = payload.get("token")
     if not token:
         raise APIError("Login response did not include a token.")
-    save_config({
-        "base": base.rstrip("/"),
-        "auth": {"mode": "token", "token": token, "username": username}
-    })
+    _save_token(base, token, username)
     return payload
 
 
-def search_by_subject(base: str, subject: str, path: str = "", no_auth: bool = False) -> List[Dict[str, Any]]:
-    """Search for items with a specific subject/tag."""
+def search_by_type(base: str, portal_type: str, path: str = "", no_auth: bool = False) -> List[Dict[str, Any]]:
+    """Search for items by portal_type (object type).
+    
+    Args:
+        base: Base API URL
+        portal_type: The portal_type to search for (e.g., 'Document', 'Folder', 'News Item')
+        path: Optional path to limit search to
+        no_auth: Skip authentication
+    
+    Returns:
+        List of items matching the portal_type
+    """
     # Ensure base is a string (handle Typer Option objects)
     if not isinstance(base, str):
         base = get_base_url(None)
     search_url = resolve_url("@search", base)
     params = {
-        "Subject": subject,
+        "portal_type": portal_type,
+        "b_size": 1000,  # Get up to 1000 items per page
     }
     if path:
         params["path"] = path
     
     headers = apply_auth({}, base, no_auth)
+    all_items = []
+    
     try:
+        # First page
         response = httpx.get(
             search_url,
             params=params,
@@ -295,14 +462,101 @@ def search_by_subject(base: str, subject: str, path: str = "", no_auth: bool = F
             timeout=15,
         )
         response.raise_for_status()
+        data = response.json()
+        items = data.get("items", [])
+        all_items.extend(items)
+        
+        # Handle pagination if there are more results
+        items_total = data.get("items_total", len(items))
+        max_items = 10000  # Limit to prevent excessive requests
+        
+        while items_total > len(all_items) and len(all_items) < max_items:
+            params["b_start"] = len(all_items)
+            response = httpx.get(
+                search_url,
+                params=params,
+                headers=headers or None,
+                timeout=15,
+            )
+            response.raise_for_status()
+            page_data = response.json()
+            page_items = page_data.get("items", [])
+            if not page_items:
+                break
+            all_items.extend(page_items)
+            if len(page_items) < params.get("b_size", 1000):
+                break
+        
+        return all_items
     except httpx.HTTPStatusError as exc:
         raise APIError(f"Search failed with status {exc.response.status_code}.") from exc
     except httpx.RequestError as exc:
         raise APIError(f"Unable to reach {search_url}: {exc}") from exc
+    except ValueError:
+        return []
+
+
+def search_by_subject(base: str, subject: str, path: str = "", no_auth: bool = False) -> List[Dict[str, Any]]:
+    """Search for items with a specific subject/tag.
+    
+    Note: This uses the Plone catalog search which may not find all items if they're not
+    properly indexed. The catalog search is case-sensitive and may miss items due to
+    indexing issues. For a more comprehensive search, consider using get_all_tags() and
+    filtering the results.
+    """
+    # Ensure base is a string (handle Typer Option objects)
+    if not isinstance(base, str):
+        base = get_base_url(None)
+    search_url = resolve_url("@search", base)
+    params = {
+        "Subject": subject,
+        "b_size": 1000,  # Get up to 1000 items per page
+    }
+    if path:
+        params["path"] = path
+    
+    headers = apply_auth({}, base, no_auth)
+    all_items = []
     
     try:
+        # First page
+        response = httpx.get(
+            search_url,
+            params=params,
+            headers=headers or None,
+            timeout=15,
+        )
+        response.raise_for_status()
         data = response.json()
-        return data.get("items", [])
+        items = data.get("items", [])
+        all_items.extend(items)
+        
+        # Handle pagination if there are more results
+        items_total = data.get("items_total", len(items))
+        max_items = 10000  # Limit to prevent excessive requests
+        
+        while items_total > len(all_items) and len(all_items) < max_items:
+            params["b_start"] = len(all_items)
+            response = httpx.get(
+                search_url,
+                params=params,
+                headers=headers or None,
+                timeout=15,
+            )
+            response.raise_for_status()
+            page_data = response.json()
+            page_items = page_data.get("items", [])
+            if not page_items:
+                break
+            all_items.extend(page_items)
+            if len(page_items) < params.get("b_size", 1000):
+                break
+        
+        return all_items
+    except httpx.HTTPStatusError as exc:
+        raise APIError(f"Search failed with status {exc.response.status_code}.") from exc
+    except httpx.RequestError as exc:
+        raise APIError(f"Unable to reach {search_url}: {exc}") from exc
     except ValueError:
         return []
 

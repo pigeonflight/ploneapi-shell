@@ -1,11 +1,30 @@
 import type { PageLoad } from './$types';
-import { fetchConfig, fetchItems } from '$lib/api';
+import { fetchConfig, fetchItems, checkHealth } from '$lib/api';
 
 export const load: PageLoad = async ({ fetch, url }) => {
 	const path = url.searchParams.get('path') ?? '';
 
 	let configError: string | null = null;
 	let itemsError: string | null = null;
+	let backendError: string | null = null;
+
+	// First check if backend is running
+	const healthResult = await Promise.allSettled([
+		checkHealth(fetch).catch(() => null)
+	]);
+
+	const healthOk = healthResult[0].status === 'fulfilled' && healthResult[0].value === true;
+	
+	if (!healthOk) {
+		backendError = 'Backend server is not running. Please ensure ploneapi-shell is installed and in your PATH.';
+		return {
+			path,
+			config: null,
+			items: [],
+			configError: backendError,
+			itemsError: null
+		};
+	}
 
 	const [configResult, itemsResult] = await Promise.allSettled([
 		fetchConfig(fetch),

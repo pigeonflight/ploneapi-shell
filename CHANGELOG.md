@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.13] - 2025-11-19
+
+### Fixed
+- **`ls` command now shows Title and ID columns**: The `ls` command was missing the Title column and didn't display object IDs. Now shows both Title and ID (object name) columns, making it much easier to identify and distinguish items. The ID is extracted from the `id` field or derived from the `@id` URL path.
+
+### Changed
+- **Combined Title and ID into single column**: The `ls` command now displays title (bold) and ID (dim) in a single "Title (ID)" column for better space utilization, using color to distinguish between the two.
+- **Enhanced tab completion for deep paths**: Tab completion now works for nested paths like `cd files/mystuff/<Tab>`, automatically fetching items from the specified directory and suggesting completions. This makes navigating deep folder structures much faster.
+
+## [0.1.12] - 2025-11-19
+
+### Added
+- `connect` command inside the REPL to switch the active site without exiting. Accepts bare hosts, adds `http(s)://` as needed (prefers `http://` for localhost/IPs), and appends `/++api++/` automatically.
+- Base URL normalization helpers that verify connectivity before saving, clear old tokens when switching sites, and ensure the config always points at the API root.
+
+### Changed
+- Quick Start and command docs now cover the `connect` workflow and note the auto-scheme/`++api++` behavior.
+
+## [0.1.11] - 2025-11-19
+
+### Added
+- Automatic token renewal via `@login-renew` when saved JWTs near expiry, so REPL/CLI sessions keep working without manual `login`.
+
+### Changed
+- Updated Quick Start and command docs to highlight the new background refresh behavior.
+
 ## [0.1.10] - 2025-11-19
 
 ### Added

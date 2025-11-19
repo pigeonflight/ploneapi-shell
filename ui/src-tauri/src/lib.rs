@@ -74,8 +74,9 @@ async fn start_backend(state: Arc<Mutex<Option<Child>>>) -> Result<(), String> {
   let (cmd, args) = backend_command();
   let mut command = Command::new(&cmd);
   command.args(args);
+  // Keep stderr for debugging, but silence stdout
   command.stdout(Stdio::null());
-  command.stderr(Stdio::null());
+  command.stderr(Stdio::piped());
 
   let child = command.spawn().map_err(|err| {
     format!(

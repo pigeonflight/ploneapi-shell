@@ -33,10 +33,14 @@ ploneapi-shell --base https://yoursite.com/++api++/
 plone> login                # prompts for username/password
 plone> login editor secret  # optional inline credentials
 plone> logout               # remove the saved token when you are done
+plone> connect demo.plone.org        # change to another site without leaving the shell
+plone> connect localhost:3000        # auto-uses http:// and appends /++api++/
 ```
 
 - **Public sites**: still run `login` so the base URL is saved; just press Enter when prompted for credentials (or pass empty strings).
 - **Authenticated sites**: enter your Plone username/password when prompted; the token is stored under `~/.config/ploneapi_shell`.
+- **Background refresh**: once authenticated, the shell automatically renews your token in the background via `@login-renew` before it expires. You only need to re-run `login` if renewal fails (e.g., your password changed).
+- **Switching sites**: use `connect <site>` inside the REPL to change bases. It accepts bare hosts (adds `https://` automatically, or `http://` for `localhost`/IP addresses) and appends `/++api++/` if you leave it out.
 
 Prefer the REPL for auth because it mirrors what you do during day-to-day exploration and makes it obvious when your session expires. The standalone CLI command `ploneapi-shell login ...` remains available for scripting or CI workflows where the REPL isn’t convenient.
 
@@ -72,10 +76,12 @@ ploneapi-shell repl
 ```
 
 Inside the shell, use filesystem-like commands:
+- `connect <site>` - Switch the active base URL (auto adds scheme/`++api++`; clears stored token so you can log into the new site)
 - `login [username] [password]` - Authenticate and save a token (prompts if you omit credentials; inline args are optional)
-- `ls` - List items with metadata (title, type, state, modified date). Note: this view focuses on readable metadata and intentionally omits the object's ID. If you need the exact `id` (for example, to confirm whether a "Member" title comes from `member`, `Members`, or `member-folder`), run `get`, `items --raw`, or `raw` to inspect the JSON where the `id`/`@id` values are shown.
-- `cd <path>` - Navigate to content (supports relative paths and full URLs)
+- `ls` - List items with metadata (title/ID combined, type, state, modified date). Shows both the human-readable title (bold) and the object ID/name (dim) in a single column, making it easy to distinguish items with similar titles (e.g., "Member" vs "member" vs "Members").
+- `cd <path>` - Navigate to content (supports relative paths, deep paths, and full URLs)
   - `cd images` - Navigate to images folder
+  - `cd files/mystuff/here` - Navigate to deep nested paths (tab completion works at each level)
   - `cd https://demo.plone.org/images` - Navigate using full URL
 - `pwd` - Show current path
 - `get [path]` - Fetch and display content
@@ -99,6 +105,7 @@ Inside the shell, use filesystem-like commands:
 **Tab completion**: Press Tab to autocomplete:
 - Commands (e.g., type `mer<Tab>` to complete `merge-tags`)
 - Item names for navigation commands like `cd`, `get`, `items` (shows clean names like "images" instead of full URLs)
+- Deep paths: Type `cd files/mystuff/<Tab>` to autocomplete items in nested directories
 - Tag names for tag management commands like `merge-tags`, `rename-tag`, `remove-tag`, `similar-tags`
 
 **Note**: Tag autocompletion may be slow on the first use as it fetches all tags from the site. Subsequent completions are cached and much faster.
@@ -433,10 +440,13 @@ List the `items` array from a container endpoint in a formatted table.
 List all available `@components` endpoints from the API root.
 
 ### `login`
-Authenticate with a Plone site and save the token. Prompts for username/password. The same command is available inside the REPL, so you can refresh credentials without leaving the shell.
+Authenticate with a Plone site and save the token. Prompts for username/password. The same command is available inside the REPL, so you can refresh credentials without leaving the shell. Tokens auto-renew in the background via `@login-renew`; manual `login` is only needed when renewal fails or you switch accounts.
 
 ### `logout`
 Remove saved credentials. Also available directly inside the REPL.
+
+### `connect <SITE>`
+Change the currently active base URL inside the REPL. Accepts bare hosts (adds `https://` automatically, or `http://` for `localhost`/IP addresses) and appends `/++api++/` if you omit it. Switching sites clears the saved token so you can log in afresh.
 
 ### `repl`
 Launch interactive shell with tab completion and filesystem-like navigation. This is the default when no command is provided.

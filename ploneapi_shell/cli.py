@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 import posixpath
@@ -144,13 +145,24 @@ def print_items_with_metadata(items: List[Dict]) -> None:
         CONSOLE.print("[dim]No items[/dim]")
         return
     table = Table(box=box.MINIMAL_DOUBLE_HEAD)
-    table.add_column("Title", overflow="fold", style="bold")
-    table.add_column("Type", style="cyan", width=20)
+    table.add_column("Title (ID)", overflow="fold", style="bold")
     table.add_column("State", style="yellow", width=12)
     table.add_column("Modified", style="dim", width=20)
     for item in items:
-        title = item.get("title", item.get("id", "—"))
+        # Extract title - try multiple field names
+        title = item.get("title") or item.get("Title") or item.get("name") or "—"
+        # Extract ID - try id field first, then extract from @id URL, then try other fields
+        item_id = item.get("id") or item.get("Id") or item.get("UID")
+        if not item_id:
+            # Extract from @id URL (e.g., "https://site.com/++api++/folder/item" -> "item")
+            item_url = item.get("@id", "")
+            if item_url:
+                item_id = item_url.rstrip("/").split("/")[-1] or ""
+        item_id = item_id or "—"
+        # Extract type
         item_type = item.get("@type", item.get("type_title", "—"))
+        # Combine title, ID, and type with color distinction: title in bold, ID in dim, type in cyan
+        title_with_id_type = f"[bold]{title}[/bold] [dim]({item_id})[/dim] [cyan][{item_type}][/cyan]"
         state = item.get("review_state", "—")
         modified = item.get("modified", item.get("effective", "—"))
         if modified and modified != "—":
@@ -160,7 +172,7 @@ def print_items_with_metadata(items: List[Dict]) -> None:
                 modified = dt.strftime("%Y-%m-%d %H:%M")
             except (ValueError, AttributeError):
                 pass
-        table.add_row(title, item_type, state, modified)
+        table.add_row(title_with_id_type, state, modified)
     CONSOLE.print(table)
 
 
@@ -297,16 +309,39 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "login", "logout", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "connect", "login", "logout", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         _tag_cache: Optional[List[str]] = None
         _tag_cache_path: str = ""
         
-        def _item_suggestions(self) -> List[str]:
+        def _item_suggestions(self, path_prefix: str = "") -> List[str]:
+            """Get item suggestions from a specific path.
+            
+            Args:
+                path_prefix: Optional path to fetch items from (e.g., "files/mystuff")
+                            If empty, uses current_path
+            """
             results: List[str] = []
             try:
-                _, data = fetch(current_path, resolved_base, {}, {}, no_auth=False)
+                # Determine which path to fetch from
+                if path_prefix:
+                    # For deep paths, resolve relative to current_path
+                    if path_prefix.startswith("/"):
+                        # Absolute path - use as-is (remove leading slash)
+                        fetch_path = path_prefix.lstrip("/")
+                    else:
+                        # Relative path - combine with current_path
+                        if current_path:
+                            # Combine: current_path + path_prefix
+                            fetch_path = f"{current_path}/{path_prefix}".strip("/")
+                        else:
+                            # No current_path, use path_prefix as-is
+                            fetch_path = path_prefix
+                else:
+                    fetch_path = current_path
+                
+                _, data = fetch(fetch_path, resolved_base, {}, {}, no_auth=False)
                 items = data.get("items", [])
                 for item in items:
                     # Prefer the 'id' field (usually just the name like "images")
@@ -375,11 +410,49 @@ def cmd_repl(
             
             # Item suggestions for navigation/content commands
             if cmd in ("cd", "get", "items", "raw"):
-                suggestions = self._item_suggestions()
-                prefix = last_word if not has_trailing_space else ""
-                for suggestion in suggestions:
-                    if suggestion.startswith(prefix):
-                        yield Completion(suggestion, start_position=-len(prefix))
+                # Get the full path argument being typed (not just the last word)
+                # For "cd files/mystuff/here", we want "files/mystuff/here"
+                if len(parts) > 1:
+                    # Reconstruct the path argument from parts[1:] to handle quoted paths
+                    # But for autocomplete, we need the raw text before cursor
+                    # Extract the path argument from the text
+                    cmd_end = len(cmd)
+                    # Find where the command ends and the argument starts
+                    arg_start = text.find(cmd, 0) + len(cmd)
+                    if arg_start < len(text):
+                        path_text = text[arg_start:].lstrip()
+                        # Handle deep paths: if path contains "/", extract directory and prefix
+                        if "/" in path_text:
+                            # Split path: "files/mystuff/here" -> dir="files/mystuff", prefix="here"
+                            path_parts = path_text.rsplit("/", 1)
+                            if len(path_parts) == 2:
+                                dir_path, prefix = path_parts
+                                suggestions = self._item_suggestions(dir_path)
+                                # Only suggest items that start with the prefix
+                                for suggestion in suggestions:
+                                    if suggestion.startswith(prefix):
+                                        # Return the full path including the directory
+                                        full_suggestion = f"{dir_path}/{suggestion}"
+                                        yield Completion(full_suggestion, start_position=-len(path_text))
+                            else:
+                                # Just a trailing slash, suggest from the directory
+                                dir_path = path_text.rstrip("/")
+                                suggestions = self._item_suggestions(dir_path)
+                                for suggestion in suggestions:
+                                    full_suggestion = f"{dir_path}/{suggestion}"
+                                    yield Completion(full_suggestion, start_position=-len(path_text))
+                        else:
+                            # Simple case: no slashes, just suggest from current directory
+                            suggestions = self._item_suggestions()
+                            prefix = path_text if not has_trailing_space else ""
+                            for suggestion in suggestions:
+                                if suggestion.startswith(prefix):
+                                    yield Completion(suggestion, start_position=-len(path_text))
+                else:
+                    # No argument yet, suggest from current directory
+                    suggestions = self._item_suggestions()
+                    for suggestion in suggestions:
+                        yield Completion(suggestion, start_position=0)
             
             # Tag suggestions for tag management commands
             elif cmd in ("merge-tags", "rename-tag", "remove-tag", "similar-tags"):
@@ -448,6 +521,9 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]get [path][/cyan]       - Fetch and display content")
                 CONSOLE.print("  [cyan]items [path][/cyan]     - List items array")
                 CONSOLE.print("  [cyan]raw [path][/cyan]      - Show raw JSON")
+                CONSOLE.print("  [cyan]search <type> [--path <path>][/cyan] - Search for items by object type")
+                CONSOLE.print("    Example: search Document (finds all Document items)")
+                CONSOLE.print("    Example: search Folder --path /some/path (finds Folders in specific path)")
                 CONSOLE.print("\n[bold]Tags:[/bold]")
                 CONSOLE.print("  [cyan]tags [path][/cyan]     - List all tags with frequency")
                 CONSOLE.print("  [cyan]similar-tags [tag] [threshold][/cyan] - Find similar tags")
@@ -467,6 +543,7 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]bulk-transition <name>[/cyan] - Execute transition on all items in current directory")
                 CONSOLE.print("\n[bold]Other:[/bold]")
                 CONSOLE.print("  [cyan]components[/cyan]      - List available components")
+                CONSOLE.print("  [cyan]connect <site>[/cyan]  - Change base URL (accepts bare host, adds scheme/++api++ automatically)")
                 CONSOLE.print("  [cyan]login [username] [password][/cyan] - Authenticate and save token (password optional; will prompt if omitted)")
                 CONSOLE.print("  [cyan]logout[/cyan]          - Remove saved credentials (same as CLI command)")
                 CONSOLE.print("  [cyan]help[/cyan]            - Show this help")
@@ -854,6 +931,10 @@ def cmd_repl(
                                                 errors += 1
                                                 continue
                                             
+                                            # Small delay to allow server to process the update before verification
+                                            import time
+                                            time.sleep(0.1)  # 100ms delay
+                                            
                                             # Verify the update succeeded by fetching the item again
                                             try:
                                                 _, verify_item = api.fetch(item_path, resolved_base, {}, {}, no_auth=False)
@@ -914,6 +995,28 @@ def cmd_repl(
                                     CONSOLE.print(f"[yellow]No items were updated[/yellow]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "search":
+                if not args:
+                    CONSOLE.print("[red]Error:[/red] search requires an object type (portal_type)")
+                    CONSOLE.print("  Example: search Document (searches for all Document items)")
+                    CONSOLE.print("  Example: search Folder --path /some/path (searches in specific path)")
+                else:
+                    portal_type = args[0]
+                    # Parse path option if provided
+                    search_path = current_path
+                    if "--path" in args:
+                        idx = args.index("--path")
+                        if idx + 1 < len(args):
+                            search_path = args[idx + 1]
+                    try:
+                        items = api.search_by_type(resolved_base, portal_type, search_path, no_auth=False)
+                        if not items:
+                            CONSOLE.print(f"[yellow]No items found with type '{portal_type}'.[/yellow]")
+                        else:
+                            CONSOLE.print(f"[cyan]Found {len(items)} item(s) with type '{portal_type}'[/cyan]")
+                            print_items_with_metadata(items)
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "remove-tag":
                 if not args:
                     CONSOLE.print("[red]Error:[/red] remove-tag requires a tag name")
@@ -939,6 +1042,30 @@ def cmd_repl(
                                 CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd in ("connect", "set-base"):
+                if not args:
+                    CONSOLE.print(f"Current base URL: [cyan]{resolved_base}[/cyan]")
+                    continue
+                target = args[0]
+                try:
+                    normalized = api.normalize_base_input(target)
+                    CONSOLE.print(f"[dim]Checking {normalized}...[/dim]")
+                    api.verify_base_url(normalized)
+                except api.APIError as e:
+                    CONSOLE.print(f"[red]Error:[/red] {e}")
+                    continue
+                config = api.load_config() or {}
+                persisted_base = normalized.rstrip("/")
+                config["base"] = persisted_base
+                if "auth" in config:
+                    config.pop("auth")
+                    CONSOLE.print("[yellow]Cleared saved credentials for the previous site. Run 'login' to authenticate again.[/yellow]")
+                api.save_config(config)
+                resolved_base = persisted_base
+                current_path = ""
+                completer._tag_cache = None
+                completer._tag_cache_path = ""
+                CONSOLE.print(f"[green]Base URL updated to {normalized}[/green]")
             elif cmd == "login":
                 username = args[0] if args else None
                 password = args[1] if len(args) > 1 else None
@@ -1149,14 +1276,97 @@ def cmd_merge_tags(
     for item in items_list:
         try:
             item_path = item.get("@id", "").replace(resolved_base.rstrip("/"), "").lstrip("/")
-            current_tags = item.get("subjects", [])
+            if not item_path:
+                errors += 1
+                CONSOLE.print(f"[yellow]Warning: Could not extract path from item '{item.get('title', 'unknown')}'[/yellow]")
+                continue
+            
+            # Fetch current item to get actual subjects (more reliable than search result)
+            try:
+                _, current_item = api.fetch(item_path, resolved_base, {}, {}, no_auth)
+                current_tags = (
+                    current_item.get("Subject") or
+                    current_item.get("subjects") or
+                    current_item.get("subject") or
+                    []
+                )
+                if isinstance(current_tags, str):
+                    current_tags = [current_tags] if current_tags else []
+                elif not isinstance(current_tags, list):
+                    current_tags = list(current_tags) if current_tags else []
+            except Exception as e:
+                # Fallback to subjects from search result
+                current_tags = item.get("subjects", [])
+            
             # Remove all source tags, add target tag if not present
             new_tags = [tag for tag in current_tags if tag not in source_tags]
             if target_tag not in new_tags:
                 new_tags.append(target_tag)
             
-            api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=no_auth)
-            updated += 1
+            # Only update if tags actually changed
+            if set(current_tags) != set(new_tags):
+                try:
+                    api.update_item_subjects(resolved_base, item_path, new_tags, no_auth=no_auth)
+                except api.APIError as update_error:
+                    errors += 1
+                    error_msg = str(update_error)
+                    if "__getitem__" in error_msg or "500" in error_msg:
+                        CONSOLE.print(f"[red]Server error updating '{item.get('title', 'unknown')}': {error_msg}[/red]")
+                        CONSOLE.print(f"[yellow]This is a known issue with the Plone REST API on this server. The Subject field may not be updatable via REST API.[/yellow]")
+                    else:
+                        CONSOLE.print(f"[red]Error updating '{item.get('title', 'unknown')}': {error_msg}[/red]")
+                    continue
+                
+                # Small delay to allow server to process the update before verification
+                time.sleep(0.1)  # 100ms delay
+                
+                # Verify the update succeeded by fetching the item again
+                try:
+                    _, verify_item = api.fetch(item_path, resolved_base, {}, {}, no_auth)
+                    verify_tags = (
+                        verify_item.get("Subject") or
+                        verify_item.get("subjects") or
+                        verify_item.get("subject") or
+                        []
+                    )
+                    if isinstance(verify_tags, str):
+                        verify_tags = [verify_tags] if verify_tags else []
+                    elif not isinstance(verify_tags, list):
+                        verify_tags = list(verify_tags) if verify_tags else []
+                    
+                    # Verify the update: source tags should be gone, target tag should be present
+                    source_tags_still_present = any(tag in verify_tags for tag in source_tags)
+                    target_tag_present = target_tag in verify_tags
+                    
+                    if source_tags_still_present:
+                        if target_tag_present:
+                            # Both present - update partially failed
+                            source_list = ", ".join(f"'{tag}'" for tag in source_tags if tag in verify_tags)
+                            CONSOLE.print(f"[yellow]Warning: Update failed for '{item.get('title', 'unknown')}'. Source tag(s) {source_list} still present, target tag '{target_tag}' also present. Update may have failed.[/yellow]")
+                            errors += 1
+                            continue
+                        else:
+                            # Source tags still there, target tag not added - update failed
+                            source_list = ", ".join(f"'{tag}'" for tag in source_tags if tag in verify_tags)
+                            CONSOLE.print(f"[yellow]Warning: Update failed for '{item.get('title', 'unknown')}'. Source tag(s) {source_list} still present, target tag '{target_tag}' not added.[/yellow]")
+                            errors += 1
+                            continue
+                    elif not target_tag_present:
+                        # Source tags removed but target tag not added - update failed
+                        CONSOLE.print(f"[yellow]Warning: Update failed for '{item.get('title', 'unknown')}'. Source tags removed but target tag '{target_tag}' not added.[/yellow]")
+                        errors += 1
+                        continue
+                    # Success: source tags removed, target tag present
+                except Exception:
+                    # Verification failed, but update was attempted
+                    # Assume it worked if we can't verify
+                    pass
+                
+                updated += 1
+            else:
+                # Tags didn't change (maybe source tags weren't in the list)
+                if len(source_tags) == 1:
+                    CONSOLE.print(f"[yellow]Warning: Tag '{source_tags[0]}' not found in item '{item.get('title', 'unknown')}', skipping[/yellow]")
         except Exception as e:
             errors += 1
             CONSOLE.print(f"[red]Error updating {item.get('title', 'item')}: {e}[/red]")
@@ -1231,6 +1441,27 @@ def cmd_remove_tag(
         CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
         if errors:
             CONSOLE.print(f"[yellow]{errors} error(s) occurred[/yellow]")
+    except api.APIError as e:
+        raise CliError(str(e)) from e
+
+
+@APP.command("search")
+def cmd_search(
+    portal_type: str = typer.Argument(..., help="Object type to search for (e.g., 'Document', 'Folder', 'News Item')."),
+    path: str = typer.Option("", "--path", help="Limit search to items in this path."),
+    base: Optional[str] = typer.Option(None, "--base", help="Override the API base URL."),
+    no_auth: bool = typer.Option(False, "--no-auth", help="Skip saved auth headers."),
+) -> None:
+    """Search for items by object type (portal_type)."""
+    resolved_base = get_base_url(base)
+    try:
+        items = api.search_by_type(resolved_base, portal_type, path, no_auth=no_auth)
+        if not items:
+            CONSOLE.print(f"[yellow]No items found with type '{portal_type}'.[/yellow]")
+            return
+        
+        CONSOLE.print(f"[cyan]Found {len(items)} item(s) with type '{portal_type}'[/cyan]")
+        print_items_with_metadata(items)
     except api.APIError as e:
         raise CliError(str(e)) from e
 
