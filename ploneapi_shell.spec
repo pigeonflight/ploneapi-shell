@@ -109,8 +109,8 @@ app = BUNDLE(
     info_plist={
         'NSPrincipalClass': 'NSApplication',
         'NSHighResolutionCapable': 'True',
-               'CFBundleShortVersionString': '0.1.8',
-               'CFBundleVersion': '0.1.8',
+               'CFBundleShortVersionString': '0.1.9',
+               'CFBundleVersion': '0.1.9',
         'NSHumanReadableCopyright': 'Copyright © 2025 David Bain',
         'LSMinimumSystemVersion': '10.13',
     },

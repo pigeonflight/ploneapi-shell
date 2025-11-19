@@ -26,10 +26,11 @@ from prompt_toolkit import prompt
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 
-from ploneapi_shell import api
+from ploneapi_shell import api, __version__
 
 CONFIG_FILE = api.CONFIG_FILE
 HISTORY_FILE = CONFIG_FILE.parent / "history.txt"
+VERSION_MESSAGE = f"[dim]ploneapi-shell v{__version__}[/dim]"
 
 APP = typer.Typer(
     help="Interactive shell and CLI for exploring Plone REST API sites.",
@@ -296,7 +297,7 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "login", "logout", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         _tag_cache: Optional[List[str]] = None
@@ -416,7 +417,7 @@ def cmd_repl(
     
     CONSOLE.print("[bold green]Plone API Shell[/bold green]")
     CONSOLE.print(f"Base URL: [cyan]{resolved_base}[/cyan]")
-    CONSOLE.print("Type 'help' for commands, 'exit' to quit.\n")
+    CONSOLE.print("Type 'help' for commands. Use 'exit' to leave the shell, 'login' to authenticate, or 'logout' to remove saved credentials.\n")
     
     while True:
         try:
@@ -466,8 +467,10 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]bulk-transition <name>[/cyan] - Execute transition on all items in current directory")
                 CONSOLE.print("\n[bold]Other:[/bold]")
                 CONSOLE.print("  [cyan]components[/cyan]      - List available components")
+                CONSOLE.print("  [cyan]login [username] [password][/cyan] - Authenticate and save token (password optional; will prompt if omitted)")
+                CONSOLE.print("  [cyan]logout[/cyan]          - Remove saved credentials (same as CLI command)")
                 CONSOLE.print("  [cyan]help[/cyan]            - Show this help")
-                CONSOLE.print("  [cyan]exit[/cyan]            - Exit shell\n")
+                CONSOLE.print("  [cyan]exit[/cyan] / [cyan]quit[/cyan] - Leave shell (does not log out)\n")
             elif cmd == "pwd":
                 path_display = current_path if current_path else "/"
                 CONSOLE.print(f"[cyan]{path_display}[/cyan]")
@@ -936,10 +939,28 @@ def cmd_repl(
                                 CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "login":
+                username = args[0] if args else None
+                password = args[1] if len(args) > 1 else None
+                if not username:
+                    username = typer.prompt("Username")
+                if not password:
+                    password = typer.prompt("Password", hide_input=True)
+                try:
+                    api.login(resolved_base, username, password)
+                    CONSOLE.print(f"[green]Authenticated. Token saved to {CONFIG_FILE}[/green]")
+                except api.APIError as e:
+                    CONSOLE.print(f"[red]Login failed:[/red] {e}")
+            elif cmd == "logout":
+                if CONFIG_FILE.exists():
+                    delete_config()
+                    CONSOLE.print(f"[yellow]Removed saved credentials at {CONFIG_FILE}[/yellow]")
+                else:
+                    CONSOLE.print("No saved credentials found.")
             else:
                 CONSOLE.print(f"[red]Unknown command:[/red] {cmd}. Type 'help' for available commands.")
         except KeyboardInterrupt:
-            CONSOLE.print("\n[yellow]Use 'exit' to quit[/yellow]")
+            CONSOLE.print("\n[yellow]Use 'exit' to leave the shell or 'logout' to remove saved credentials[/yellow]")
         except EOFError:
             break
     
@@ -949,6 +970,10 @@ def cmd_repl(
 @APP.callback()
 def main(ctx: typer.Context):
     """Default entrypoint: start REPL when no subcommand is provided."""
+    ctx.obj = ctx.obj or {}
+    if not ctx.obj.get("version_reported"):
+        CONSOLE.print(VERSION_MESSAGE)
+        ctx.obj["version_reported"] = True
     if ctx.invoked_subcommand is None:
         cmd_repl()
 
@@ -960,6 +985,27 @@ def cmd_logout() -> None:
         CONSOLE.print(f"[yellow]Removed saved credentials at {CONFIG_FILE}[/yellow]")
     else:
         CONSOLE.print("No saved credentials found.")
+
+
+@APP.command("serve")
+def cmd_serve(
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host interface for the API server."),
+    port: int = typer.Option(8787, "--port", "-p", help="Port for the API server."),
+    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (development only)."),
+    allow_origin: List[str] = typer.Option(
+        [],
+        "--allow-origin",
+        help="Additional CORS origin allowed to access the API. Repeat to add more.",
+    ),
+) -> None:
+    """Start the HTTP server used by the SvelteKit desktop UI."""
+    from . import server
+
+    origins = allow_origin or None
+    try:
+        server.run_server(host=host, port=port, reload=reload, allowed_origins=origins)
+    except KeyboardInterrupt:
+        CONSOLE.print("\n[dim]Server stopped[/dim]")
 
 
 @APP.command("tags")

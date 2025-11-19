@@ -21,25 +21,26 @@ pip install -e .
 
 ## Quick Start
 
-### 1. Configuration
+### 1. Configure (preferred: log in from the REPL)
 
-First, configure the tool for your Plone site. Most Plone 6.x sites expose their API at `siteroot/++api++`.
+Launch the REPL pointed at your site and use the built-in `login` command to save both the base URL and your token in one place.
 
-**For public sites (no authentication):**
 ```bash
-# Login will save the base URL (even without credentials, it sets up your config)
-ploneapi-shell login --base https://yoursite.com/++api++/
-# When prompted, just press Enter for username/password (or use --username "" --password "")
+# Start the REPL with your API base (default command already launches the REPL)
+ploneapi-shell --base https://yoursite.com/++api++/
+
+# Inside the prompt:
+plone> login                # prompts for username/password
+plone> login editor secret  # optional inline credentials
+plone> logout               # remove the saved token when you are done
 ```
 
-**For authenticated sites:**
-```bash
-# Login and save credentials + base URL
-ploneapi-shell login --base https://yoursite.com/++api++/
-# Enter your Plone username and password when prompted
-```
+- **Public sites**: still run `login` so the base URL is saved; just press Enter when prompted for credentials (or pass empty strings).
+- **Authenticated sites**: enter your Plone username/password when prompted; the token is stored under `~/.config/ploneapi_shell`.
 
-After login, the base URL is saved and you can omit `--base` from subsequent commands.
+Prefer the REPL for auth because it mirrors what you do during day-to-day exploration and makes it obvious when your session expires. The standalone CLI command `ploneapi-shell login ...` remains available for scripting or CI workflows where the REPL isn’t convenient.
+
+After logging in once, you can omit `--base` for future sessions; the saved config will be reused automatically.
 
 ### 2. Basic Usage
 
@@ -71,7 +72,8 @@ ploneapi-shell repl
 ```
 
 Inside the shell, use filesystem-like commands:
-- `ls` - List items with metadata (title, type, state, modified date)
+- `login [username] [password]` - Authenticate and save a token (prompts if you omit credentials; inline args are optional)
+- `ls` - List items with metadata (title, type, state, modified date). Note: this view focuses on readable metadata and intentionally omits the object's ID. If you need the exact `id` (for example, to confirm whether a "Member" title comes from `member`, `Members`, or `member-folder`), run `get`, `items --raw`, or `raw` to inspect the JSON where the `id`/`@id` values are shown.
 - `cd <path>` - Navigate to content (supports relative paths and full URLs)
   - `cd images` - Navigate to images folder
   - `cd https://demo.plone.org/images` - Navigate using full URL
@@ -83,14 +85,16 @@ Inside the shell, use filesystem-like commands:
 - `tags [path]` - List all tags with frequency
 - `similar-tags [tag] [threshold]` - Find similar tags
   - `similar-tags swimming` - Find tags similar to "swimming" (default threshold: 70%)
-  - `similar-tags swimming 80` - Find similar tags with threshold 80
+  - `similar-tags swimming 80` - Preferred pattern: supply the tag and then the threshold (`80` here) without extra flags
   - `similar-tags swimming -t 85` - Use `-t` flag for threshold
   - `similar-tags -t 75` - Find all similar pairs with threshold 75
 - `merge-tags <old> <new>` - Merge two tags
 - `rename-tag <old> <new>` - Rename a tag
 - `remove-tag <tag>` - Remove a tag from all items
 - `help` - Show all commands
-- `exit` - Exit shell
+- `serve` - Start the local HTTP API for the desktop UI
+- `logout` - Remove saved credentials (same as the CLI `logout` command)
+- `exit` / `quit` - Leave the interactive shell (does not remove saved credentials)
 
 **Tab completion**: Press Tab to autocomplete:
 - Commands (e.g., type `mer<Tab>` to complete `merge-tags`)
@@ -118,6 +122,47 @@ This opens a Streamlit web interface at `http://localhost:8501` with:
 
 The web interface provides the same functionality as the REPL but with a browser-based UI, making it easier to view and interact with Plone content.
 
+### 4b. Desktop UI (SvelteKit)
+
+We're actively building a modern desktop interface using SvelteKit + FastAPI.
+
+1. Start the backend bridge:
+   ```bash
+   ploneapi-shell serve --host 127.0.0.1 --port 8787
+   ```
+2. Run the SvelteKit app:
+   ```bash
+   cd ui
+   bun run dev --open
+   ```
+
+The Svelte UI talks to the `serve` API (`/api/get`, `/api/items`, etc.), giving you a fast desktop-like experience that will replace the Streamlit prototype over time.
+
+For a native macOS build we embed the Svelte assets inside a Tauri shell:
+
+```bash
+cd ui
+# run the desktop app in dev mode (spawns bun dev + tauri)
+bun run desktop:dev
+
+# produce a signed .app / DMG under ui/src-tauri/target
+bun run desktop:build
+```
+
+The Tauri app automatically launches `ploneapi-shell serve` on startup. If your CLI lives in a virtualenv, point the app to it with `PLONEAPI_SHELL_CMD=/path/to/venv/bin/ploneapi-shell` before running the desktop binaries.
+
+**Available REST endpoints**
+
+- `GET /api/health` – quick status check for the bridge
+- `GET /api/config` – returns the currently saved base URL
+- `GET /api/get?path=/news` – fetches JSON for any path (supports `raw=true`)
+- `GET /api/items?path=/news` – lists folderish content with metadata
+- `GET /api/tags?path=/news` – aggregated Subject counts
+- `GET /api/similar-tags?tag=swimming&threshold=80`
+- `POST /api/tags/merge` – merge multiple tags into one (accepts `dry_run`)
+- `POST /api/tags/rename` – rename a tag (same payload as merge but single tag)
+- `POST /api/tags/remove` – remove a tag from every item
+
 ### 5. Tag Management
 
 Plone uses the **Subject** field for tagging content. This tool provides powerful commands for discovering, analyzing, and managing tags across your Plone site.
@@ -143,10 +188,13 @@ The command uses Plone's search endpoint for efficient tag discovery across larg
 
 Use fuzzy matching to find tags with similar names, useful for cleaning up duplicate or misspelled tags:
 
-**CLI Examples:**
+**CLI Examples (positional threshold is recommended):**
 ```bash
 # Find tags similar to a specific tag (default threshold: 70%)
 ploneapi-shell similar-tags "swimming"
+
+# Preferred: provide the threshold right after the tag (no flags needed)
+ploneapi-shell similar-tags "swimming" 80
 
 # Use a custom threshold with --threshold flag
 ploneapi-shell similar-tags "swimming" --threshold 80
@@ -166,6 +214,9 @@ ploneapi-shell similar-tags
 ploneapi-shell repl
 # Find similar tags with default threshold
 > similar-tags swimming
+
+# Preferred: provide the threshold right after the tag
+> similar-tags swimming 80
 
 # Use threshold as first argument (finds all pairs with that threshold)
 > similar-tags 80
@@ -320,6 +371,27 @@ ploneapi-shell get /search --param "q:swimming" --param "limit:10"
 ```
 
 ## Configuration
+# Upgrade
+
+To upgrade to the latest release of `ploneapi-shell`, reinstall it with your package manager of choice:
+
+```bash
+# pip users
+pip install --upgrade ploneapi-shell
+
+# pipx users
+pipx upgrade ploneapi-shell
+
+# If installed in a virtualenv/system Python
+python -m pip install -U ploneapi-shell
+```
+
+Confirm your version after upgrading:
+
+```bash
+ploneapi-shell --version
+```
+
 
 Credentials and base URL are stored in `~/.config/ploneapi_shell/config.json` (or override with `PLONEAPI_SHELL_CONFIG` environment variable).
 
@@ -361,10 +433,10 @@ List the `items` array from a container endpoint in a formatted table.
 List all available `@components` endpoints from the API root.
 
 ### `login`
-Authenticate with a Plone site and save the token. Prompts for username/password.
+Authenticate with a Plone site and save the token. Prompts for username/password. The same command is available inside the REPL, so you can refresh credentials without leaving the shell.
 
 ### `logout`
-Remove saved credentials.
+Remove saved credentials. Also available directly inside the REPL.
 
 ### `repl`
 Launch interactive shell with tab completion and filesystem-like navigation. This is the default when no command is provided.
@@ -373,6 +445,15 @@ Launch interactive shell with tab completion and filesystem-like navigation. Thi
 Launch web-based interface using Streamlit. Opens at `http://localhost:8501` by default.
 - `--port, -p` - Port to run on (default: 8501)
 - `--host, -h` - Host to bind to (default: localhost)
+
+### `serve`
+Start the lightweight FastAPI bridge that powers the new SvelteKit-based desktop UI.  
+The server listens on `http://127.0.0.1:8787` by default and exposes REST endpoints that mirror the interactive commands (`/api/get`, `/api/items`, etc.).
+
+- `--host, -h` - Host interface (default: 127.0.0.1)
+- `--port, -p` - Port to listen on (default: 8787)
+- `--reload` - Enable auto-reload while developing the UI
+- `--allow-origin` - Additional CORS origin allowed to call the API (repeatable)
 
 ### `tags [PATH]`
 List all tags (subjects) with their frequency across the site or a specific path.
@@ -386,7 +467,7 @@ Find tags similar to the given tag using fuzzy matching. If no tag is provided, 
 
 **Arguments:**
 - `TAG` (optional) - Tag to find similar matches for. If omitted, finds all similar tag pairs.
-- `THRESHOLD` (optional) - Minimum similarity score (0-100, default: 70). Can be provided as:
+- `THRESHOLD` (optional) - Minimum similarity score (0-100, default: 70). Recommended input is the positional syntax right after the tag (e.g., `similar-tags swimming 80`). Other supported forms:
   - Positional argument: `similar-tags swimming 80` or `similar-tags 80` (for all pairs)
   - Flag: `--threshold 80` or `-t 80`
 

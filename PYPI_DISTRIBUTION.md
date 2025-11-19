@@ -65,7 +65,7 @@ You'll be prompted for your PyPI credentials (username and password/token).
 
 Update the version in `pyproject.toml`:
 ```toml
-version = "0.1.8"
+version = "0.1.9"
 ```
 
 Follow semantic versioning (MAJOR.MINOR.PATCH).

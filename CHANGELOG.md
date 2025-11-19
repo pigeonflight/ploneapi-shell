@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2025-11-19
+
+### Added
+- Added `login` and `logout` commands directly to the REPL so you can refresh or clear credentials without leaving the shell.
+
+### Changed
+- Updated README Quick Start and command docs to make REPL-based authentication the preferred onboarding path.
+
+## [0.1.9] - 2025-11-19
+
+### Improved
+- Clarified REPL help text to distinguish `exit`/`quit` (leave shell) from `logout` (clear saved credentials)
+- Updated README command list so `logout` is documented alongside `exit`/`quit`, reducing onboarding confusion
+
 ## [0.1.8] - 2025-01-XX
 
 ### Fixed
