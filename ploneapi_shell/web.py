@@ -225,7 +225,9 @@ def execute_command(cmd: str, args: List[str], base_url: str, current_path: str)
 
 def render_output(output: Dict[str, Any]):
     """Render command output in Streamlit."""
-    if output["type"] == "items":
+    if output.get("type") == "help":
+        st.info(output.get("content", ""))
+    elif output["type"] == "items":
         items = output.get("items", [])
         if items:
             # Create DataFrame for table display
@@ -397,7 +399,36 @@ with st.sidebar:
 st.title("Plone API Shell")
 st.caption(f"Base URL: `{st.session_state.base_url}`")
 
-# Command input
+# Display command history at the top (most recent first)
+if st.session_state.command_history:
+    st.divider()
+    # Show history in reverse order (most recent at top)
+    for entry in reversed(st.session_state.command_history):
+        # Show command
+        st.markdown(f"**Command:** `{entry['command']}`")
+        
+        # Show result
+        result = entry["result"]
+        if result["success"]:
+            if isinstance(result["output"], str):
+                st.success(result["output"])
+            elif isinstance(result["output"], dict):
+                render_output(result["output"])
+        else:
+            st.error(result.get("error", "Unknown error"))
+        
+        # Show URL if available
+        if isinstance(result["output"], dict) and "url" in result["output"]:
+            st.caption(f"URL: `{result['output']['url']}`")
+        
+        st.divider()
+
+# Reset command input if flagged (must happen before widget instantiation)
+if st.session_state.get("command_input_reset"):
+    st.session_state.command_input = ""
+    st.session_state.command_input_reset = False
+
+# Command input at the bottom
 command_input = st.text_input(
     "Enter command",
     placeholder="ls, cd, get, items, raw, components, help...",
@@ -412,20 +443,29 @@ if command_input:
         args = parts[1:]
         
         if cmd == "help":
-            st.info("""
-            **Navigation:**
-            - `ls` - List items in current directory
-            - `cd <path>` - Change directory (use '..' to go up)
-            - `pwd` - Show current path
-            
-            **Content:**
-            - `get [path]` - Fetch and display content
-            - `items [path]` - List items array
-            - `raw [path]` - Show raw JSON
-            
-            **Other:**
-            - `components` - List available components
-            """)
+            help_output = {
+                "type": "help",
+                "content": """
+                **Navigation:**
+                - `ls` - List items in current directory
+                - `cd <path>` - Change directory (use '..' to go up)
+                - `pwd` - Show current path
+                
+                **Content:**
+                - `get [path]` - Fetch and display content
+                - `items [path]` - List items array
+                - `raw [path]` - Show raw JSON
+                
+                **Other:**
+                - `components` - List available components
+                """
+            }
+            result = {
+                "success": True,
+                "output": help_output,
+                "error": None,
+                "new_path": st.session_state.current_path,
+            }
         else:
             # Execute command
             result = execute_command(
@@ -434,35 +474,18 @@ if command_input:
                 st.session_state.base_url,
                 st.session_state.current_path,
             )
-            
-            # Update path if changed
-            if result["new_path"] != st.session_state.current_path:
-                st.session_state.current_path = result["new_path"]
-            
-            # Add to history
-            st.session_state.command_history.append({
-                "command": command_input,
-                "result": result,
-            })
-            
-            # Display result
-            if result["success"]:
-                if isinstance(result["output"], str):
-                    st.success(result["output"])
-                elif isinstance(result["output"], dict):
-                    render_output(result["output"])
-            else:
-                st.error(result.get("error", "Unknown error"))
-            
-            # Show URL if available
-            if isinstance(result["output"], dict) and "url" in result["output"]:
-                st.caption(f"URL: `{result['output']['url']}`")
-
-# Command history
-if st.session_state.command_history:
-    with st.expander("Command History", expanded=False):
-        for i, entry in enumerate(reversed(st.session_state.command_history[-10:]), 1):
-            st.code(entry["command"])
-            if entry["result"].get("error"):
-                st.error(entry["result"]["error"])
+        
+        # Update path if changed
+        if result["new_path"] != st.session_state.current_path:
+            st.session_state.current_path = result["new_path"]
+        
+        # Add to history
+        st.session_state.command_history.append({
+            "command": command_input,
+            "result": result,
+        })
+        # Flag clearing of input on next rerun
+        st.session_state.command_input_reset = True
+        # Rerun to show the new command in history
+        st.rerun()
 

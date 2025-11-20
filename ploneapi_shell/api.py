@@ -407,6 +407,8 @@ def login(base: str, username: str, password: str) -> Dict[str, Any]:
     # Ensure base is a string (handle Typer Option objects)
     if not isinstance(base, str):
         base = get_base_url(None)
+    # Normalize base URL to ensure it includes /++api++/
+    base = normalize_base_input(base)
     login_url = resolve_url("@login", base)
     try:
         response = httpx.post(

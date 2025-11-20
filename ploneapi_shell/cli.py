@@ -76,6 +76,21 @@ def get_base_url(provided: Optional[str] = None) -> str:
     return api.get_base_url(provided)
 
 
+def get_auth_status() -> str:
+    """Return current authentication status for prompt display."""
+    config = load_config()
+    if not config:
+        return "anonymous"
+    auth = config.get("auth") or {}
+    username = auth.get("username")
+    if username:
+        return username
+    if auth:
+        # Fall back to auth mode (e.g., token) if username missing
+        return auth.get("mode", "authenticated")
+    return "anonymous"
+
+
 def fetch(
     path_or_url: str | None,
     base: str,
@@ -317,7 +332,7 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "blocks", "show-block", "delete-block", "move-block", "rename", "set-id", "mv", "cp", "connect", "login", "logout", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "blocks", "show-block", "delete-block", "move-block", "move-block-up", "rename", "set-id", "mv", "cp", "connect", "login", "logout", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         _tag_cache: Optional[List[str]] = None
@@ -641,8 +656,10 @@ def cmd_repl(
     
     while True:
         try:
+            status = get_auth_status()
+            prompt_label = f"plone ({status})> "
             text = prompt(
-                "plone> ",
+                prompt_label,
                 completer=completer,
                 history=history,
                 complete_while_typing=False,
@@ -1431,32 +1448,55 @@ def cmd_repl(
                         CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "delete-block":
                 if not args:
-                    CONSOLE.print("[red]Error:[/red] delete-block requires a block ID (or partial ID)")
+                    CONSOLE.print("[red]Error:[/red] delete-block requires a block ID (or partial ID) or index")
                     CONSOLE.print("  Example: delete-block abc123")
+                    CONSOLE.print("  Example: delete-block 3 (delete block at position 3, 1-based)")
                     CONSOLE.print("  Example: delete-block abc my-item (with path)")
                 else:
-                    partial_id = args[0]
+                    identifier = args[0]
                     path = args[1] if len(args) > 1 else current_path
                     try:
                         _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
                         blocks = data.get("blocks", {})
                         blocks_layout = data.get("blocks_layout", {})
                         
-                        # Find block by partial ID
-                        matching_blocks = [bid for bid in blocks.keys() if bid.startswith(partial_id)]
+                        # Get layout items
+                        layout_items = []
+                        if isinstance(blocks_layout, dict) and "items" in blocks_layout:
+                            layout_items = blocks_layout["items"].copy()
+                        elif isinstance(blocks_layout, list):
+                            layout_items = blocks_layout.copy()
                         
-                        if not matching_blocks:
-                            CONSOLE.print(f"[yellow]No block found matching '{partial_id}'[/yellow]")
-                        elif len(matching_blocks) > 1:
-                            CONSOLE.print(f"[yellow]Multiple blocks match '{partial_id}':[/yellow]")
-                            for bid in matching_blocks:
-                                block_type = blocks[bid].get("@type", "unknown")
-                                CONSOLE.print(f"  - {bid} ({block_type})")
-                            CONSOLE.print(f"[yellow]Please use a more specific block ID[/yellow]")
+                        # Check if identifier is a number (index)
+                        block_id = None
+                        if identifier.isdigit():
+                            # It's an index (1-based)
+                            index = int(identifier) - 1  # Convert to 0-based
+                            if index < 0 or index >= len(layout_items):
+                                CONSOLE.print(f"[red]Error:[/red] Index must be between 1 and {len(layout_items)}")
+                                continue
+                            block_id = layout_items[index]
                         else:
-                            block_id = matching_blocks[0]
+                            # It's a partial ID - find block by partial ID
+                            partial_id = identifier
+                            matching_blocks = [bid for bid in blocks.keys() if bid.startswith(partial_id)]
+                            
+                            if not matching_blocks:
+                                CONSOLE.print(f"[yellow]No block found matching '{partial_id}'[/yellow]")
+                                continue
+                            elif len(matching_blocks) > 1:
+                                CONSOLE.print(f"[yellow]Multiple blocks match '{partial_id}':[/yellow]")
+                                for bid in matching_blocks:
+                                    block_type = blocks[bid].get("@type", "unknown")
+                                    CONSOLE.print(f"  - {bid} ({block_type})")
+                                CONSOLE.print(f"[yellow]Please use a more specific block ID or use index[/yellow]")
+                                continue
+                            else:
+                                block_id = matching_blocks[0]
+                        
+                        if block_id:
                             # Get block type for confirmation message
-                            block_type = blocks[block_id].get("@type", "unknown")
+                            block_type = blocks.get(block_id, {}).get("@type", "unknown")
                             if confirm_prompt(f"Delete block '{block_id}' ({block_type})?"):
                                 # Remove from blocks dict
                                 new_blocks = {k: v for k, v in blocks.items() if k != block_id}
@@ -1474,111 +1514,141 @@ def cmd_repl(
                                 CONSOLE.print(f"[green]Deleted block '{block_id}'[/green]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
-            elif cmd == "move-block":
-                if len(args) < 2:
-                    CONSOLE.print("[red]Error:[/red] move-block requires a block ID (or partial ID) and direction")
+            elif cmd in ("move-block", "move-block-up"):
+                if len(args) < 1:
+                    CONSOLE.print("[red]Error:[/red] move-block requires a block ID (or partial ID), index, or direction")
                     CONSOLE.print("  Examples: move-block abc123 up")
+                    CONSOLE.print("            move-block 3 up (move block at position 3 up, 1-based)")
                     CONSOLE.print("            move-block abc123 down")
                     CONSOLE.print("            move-block abc123 to 0")
                     CONSOLE.print("            move-block abc up my-item (with path)")
-                    CONSOLE.print("            move-block abc to 0 my-item (with path)")
+                    CONSOLE.print("            move-block-up 3 (move block at position 3 up, 1-based)")
                 else:
-                    partial_id = args[0]
-                    direction = args[1].lower()
-                    
-                    # Parse arguments: determine if last arg is a path
-                    # Format: move-block <id> <direction> [path]
-                    # Format: move-block <id> to <pos> [path]
-                    path = current_path
-                    if direction == "to":
-                        # move-block <id> to <pos> [path]
-                        if len(args) > 3:
-                            # Last arg is path
-                            path = args[3]
-                        elif len(args) == 3:
-                            # No path provided, use current_path
-                            pass
+                    # Check if this is the move-block-up shortcut
+                    if cmd == "move-block-up":
+                        # Format: move-block-up <index> [path]
+                        if not args[0].isdigit():
+                            CONSOLE.print("[red]Error:[/red] move-block-up requires a numeric index (1-based)")
+                            continue
+                        identifier = args[0]
+                        direction = "up"
+                        path = args[1] if len(args) > 1 else current_path
                     else:
-                        # move-block <id> <up|down> [path]
-                        if len(args) > 2:
-                            # Last arg is path
-                            path = args[2]
+                        # Regular move-block command
+                        identifier = args[0]
+                        direction = args[1].lower() if len(args) > 1 else None
+                        
+                        # Parse arguments: determine if last arg is a path
+                        # Format: move-block <id|index> <direction> [path]
+                        # Format: move-block <id|index> to <pos> [path]
+                        path = current_path
+                        if direction == "to":
+                            # move-block <id|index> to <pos> [path]
+                            if len(args) > 3:
+                                # Last arg is path
+                                path = args[3]
+                            elif len(args) == 3:
+                                # No path provided, use current_path
+                                pass
+                        else:
+                            # move-block <id|index> <up|down> [path]
+                            if len(args) > 2:
+                                # Last arg is path
+                                path = args[2]
+                    
+                    if not direction:
+                        CONSOLE.print("[red]Error:[/red] Direction required: 'up', 'down', or 'to <position>'")
+                        continue
                     
                     try:
                         _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
                         blocks = data.get("blocks", {})
                         blocks_layout = data.get("blocks_layout", {})
                         
-                        # Find block by partial ID
-                        matching_blocks = [bid for bid in blocks.keys() if bid.startswith(partial_id)]
+                        # Get layout items
+                        layout_items = []
+                        if isinstance(blocks_layout, dict) and "items" in blocks_layout:
+                            layout_items = blocks_layout["items"].copy()
+                        elif isinstance(blocks_layout, list):
+                            layout_items = blocks_layout.copy()
                         
-                        if not matching_blocks:
-                            CONSOLE.print(f"[yellow]No block found matching '{partial_id}'[/yellow]")
-                        elif len(matching_blocks) > 1:
-                            CONSOLE.print(f"[yellow]Multiple blocks match '{partial_id}':[/yellow]")
-                            for bid in matching_blocks:
-                                block_type = blocks[bid].get("@type", "unknown")
-                                CONSOLE.print(f"  - {bid} ({block_type})")
-                            CONSOLE.print(f"[yellow]Please use a more specific block ID[/yellow]")
+                        # Check if identifier is a number (index)
+                        block_id = None
+                        current_index = None
+                        if identifier.isdigit():
+                            # It's an index (1-based)
+                            current_index = int(identifier) - 1  # Convert to 0-based
+                            if current_index < 0 or current_index >= len(layout_items):
+                                CONSOLE.print(f"[red]Error:[/red] Index must be between 1 and {len(layout_items)}")
+                                continue
+                            block_id = layout_items[current_index]
                         else:
-                            block_id = matching_blocks[0]
+                            # It's a partial ID - find block by partial ID
+                            partial_id = identifier
+                            matching_blocks = [bid for bid in blocks.keys() if bid.startswith(partial_id)]
                             
-                            # Get layout items
-                            layout_items = []
-                            if isinstance(blocks_layout, dict) and "items" in blocks_layout:
-                                layout_items = blocks_layout["items"].copy()
-                            elif isinstance(blocks_layout, list):
-                                layout_items = blocks_layout.copy()
-                            
-                            if block_id not in layout_items:
-                                CONSOLE.print(f"[yellow]Block '{block_id}' not found in layout[/yellow]")
+                            if not matching_blocks:
+                                CONSOLE.print(f"[yellow]No block found matching '{partial_id}'[/yellow]")
+                                continue
+                            elif len(matching_blocks) > 1:
+                                CONSOLE.print(f"[yellow]Multiple blocks match '{partial_id}':[/yellow]")
+                                for bid in matching_blocks:
+                                    block_type = blocks[bid].get("@type", "unknown")
+                                    CONSOLE.print(f"  - {bid} ({block_type})")
+                                CONSOLE.print(f"[yellow]Please use a more specific block ID or use index[/yellow]")
+                                continue
                             else:
-                                current_index = layout_items.index(block_id)
-                                
-                                if direction == "up":
-                                    if current_index == 0:
-                                        CONSOLE.print("[yellow]Block is already at the top[/yellow]")
-                                        continue
-                                    else:
-                                        new_index = current_index - 1
-                                        direction_desc = "up"
-                                elif direction == "down":
-                                    if current_index == len(layout_items) - 1:
-                                        CONSOLE.print("[yellow]Block is already at the bottom[/yellow]")
-                                        continue
-                                    else:
-                                        new_index = current_index + 1
-                                        direction_desc = "down"
-                                elif direction == "to" and len(args) > 2:
-                                    try:
-                                        new_index = int(args[2])
-                                        if new_index < 0 or new_index >= len(layout_items):
-                                            CONSOLE.print(f"[red]Error:[/red] Position must be between 0 and {len(layout_items) - 1}")
-                                            continue
-                                        direction_desc = f"to position {new_index + 1}"
-                                    except ValueError:
-                                        CONSOLE.print("[red]Error:[/red] Position must be a number")
-                                        continue
-                                else:
-                                    CONSOLE.print("[red]Error:[/red] Direction must be 'up', 'down', or 'to <position>'")
+                                block_id = matching_blocks[0]
+                                if block_id not in layout_items:
+                                    CONSOLE.print(f"[yellow]Block '{block_id}' not found in layout[/yellow]")
                                     continue
+                                current_index = layout_items.index(block_id)
+                        
+                        if block_id and current_index is not None:
+                            if direction == "up":
+                                if current_index == 0:
+                                    CONSOLE.print("[yellow]Block is already at the top[/yellow]")
+                                    continue
+                                else:
+                                    new_index = current_index - 1
+                                    direction_desc = "up"
+                            elif direction == "down":
+                                if current_index == len(layout_items) - 1:
+                                    CONSOLE.print("[yellow]Block is already at the bottom[/yellow]")
+                                    continue
+                                else:
+                                    new_index = current_index + 1
+                                    direction_desc = "down"
+                            elif direction == "to" and len(args) > 2:
+                                try:
+                                    new_index = int(args[2])
+                                    if new_index < 0 or new_index >= len(layout_items):
+                                        CONSOLE.print(f"[red]Error:[/red] Position must be between 0 and {len(layout_items) - 1}")
+                                        continue
+                                    direction_desc = f"to position {new_index + 1}"
+                                except ValueError:
+                                    CONSOLE.print("[red]Error:[/red] Position must be a number")
+                                    continue
+                            else:
+                                CONSOLE.print("[red]Error:[/red] Direction must be 'up', 'down', or 'to <position>'")
+                                continue
+                            
+                            # Get block type for confirmation message
+                            block_type = blocks.get(block_id, {}).get("@type", "unknown")
+                            if confirm_prompt(f"Move block '{block_id}' ({block_type}) {direction_desc}?"):
+                                # Move the block
+                                layout_items.pop(current_index)
+                                layout_items.insert(new_index, block_id)
                                 
-                                # Get block type for confirmation message
-                                block_type = blocks[block_id].get("@type", "unknown")
-                                if confirm_prompt(f"Move block '{block_id}' ({block_type}) {direction_desc}?"):
-                                    # Move the block
-                                    layout_items.pop(current_index)
-                                    layout_items.insert(new_index, block_id)
-                                    
-                                    # Update blocks_layout
-                                    if isinstance(blocks_layout, dict):
-                                        new_layout = {"items": layout_items}
-                                    else:
-                                        new_layout = layout_items
-                                    
-                                    # Update the item
-                                    api.patch(path, resolved_base, {"blocks_layout": new_layout}, {}, no_auth=False)
-                                    CONSOLE.print(f"[green]Moved block '{block_id}' to position {new_index + 1}[/green]")
+                                # Update blocks_layout
+                                if isinstance(blocks_layout, dict):
+                                    new_layout = {"items": layout_items}
+                                else:
+                                    new_layout = layout_items
+                                
+                                # Update the item
+                                api.patch(path, resolved_base, {"blocks_layout": new_layout}, {}, no_auth=False)
+                                CONSOLE.print(f"[green]Moved block '{block_id}' to position {new_index + 1}[/green]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
             else:

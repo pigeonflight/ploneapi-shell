@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use url::Url;
 
 pub const DEFAULT_BASE: &str = "https://demo.plone.org/++api++/";
 const TOKEN_REFRESH_LEEWAY: i64 = 120; // seconds before expiry to proactively renew

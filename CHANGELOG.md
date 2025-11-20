@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.22] - 2025-01-XX
+
+### Fixed
+- **Streamlit command repetition**: Clearing the command input now happens safely before the widget is instantiated, preventing duplicate command execution in the web UI.
+
+## [0.1.21] - 2025-01-XX
+
+### Added
+- **Prompt authentication indicator**: REPL prompt now shows the current login status (e.g., `plone (admin)>` or `plone (anonymous)>`)
+
+### Changed
+- **Automated build metadata cleanup**: `sdist`/`bdist_wheel` commands now strip unsupported metadata fields automatically, so manual post-build fixes are no longer needed.
+
+## [0.1.20] - 2025-01-XX
+
+### Added
+- **Index-based block operations**: Block commands now support 1-based index notation (matching web interface behavior)
+  - `delete-block 3` - Delete block at position 3 (1-based index)
+  - `move-block 3 up` - Move block at position 3 up one position
+  - `move-block-up 3` - Shortcut command to move block at position 3 up
+  - Index-based operations work alongside existing block ID/partial ID support
+  - When moving block at position 3 up, it becomes position 2, and old position 2 becomes position 3 (matching web UI behavior)
+
+### Changed
+- **Improved Streamlit web UI**: Results now display at the top in a running commentary style
+  - Most recent command and result appear at the top
+  - Command history shows chronologically with newest entries first
+  - Command input field moved to bottom for better workflow
+  - Each command/result pair clearly separated with dividers
+  - More intuitive interface similar to chat/terminal applications
+
+## [0.1.19] - 2025-01-XX
+
+### Fixed
+- **Login base URL normalization**: Fixed login failure when base URL doesn't include `/++api++/`
+  - Login function now normalizes base URL before attempting authentication
+  - Fixes issue where users couldn't log in after upgrading from versions <= 0.1.16
+  - Base URLs are now automatically normalized and saved for future use
+  - Works with both old config files and new installations
+
 ## [0.1.18] - 2025-01-XX
 
 ### Added
