@@ -317,7 +317,7 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "blocks", "show-block", "delete-block", "move-block", "connect", "login", "logout", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "blocks", "show-block", "delete-block", "move-block", "rename", "connect", "login", "logout", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         _tag_cache: Optional[List[str]] = None
@@ -551,6 +551,14 @@ def cmd_repl(
                         if len(parts) > 3 or (len(parts) == 3 and has_trailing_space):
                             yield from handle_path_completion("move-block", 2)
             
+            elif cmd == "rename":
+                # rename <new_name> [path] - path is optional, comes after new name
+                if len(parts) > 1:
+                    # We have at least the new name, check if we're typing a path
+                    if len(parts) > 2 or (len(parts) == 2 and has_trailing_space):
+                        # We have a path argument (or space after new name)
+                        yield from handle_path_completion("rename", 1)
+            
             # Tag suggestions for tag management commands
             elif cmd in ("merge-tags", "rename-tag", "remove-tag", "similar-tags"):
                 # For merge-tags, complete tags for all arguments except the last (which is target)
@@ -641,7 +649,11 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]rename-tag <old_name> <new_name>[/cyan] - Rename a tag")
                 CONSOLE.print("  [cyan]remove-tag <tag>[/cyan] - Remove a tag from all items")
                 CONSOLE.print("\n[bold]File Operations:[/bold]")
-                CONSOLE.print("  [cyan]rename <new_name>[/cyan] - Rename current item")
+                CONSOLE.print("  [cyan]rename <new_title> [new_id] [path][/cyan] - Rename item (update title and/or id)")
+                CONSOLE.print("    Examples: rename 'New Title'")
+                CONSOLE.print("              rename 'New Title' new-id")
+                CONSOLE.print("              rename 'New Title' new-id my-item")
+                CONSOLE.print("              rename 'New Title' '' my-item (title only, keep current id)")
                 CONSOLE.print("  [cyan]cp <source> <dest>[/cyan] - Copy item")
                 CONSOLE.print("  [cyan]mv <source> <dest>[/cyan] - Move item")
                 CONSOLE.print("\n[bold]Workflow:[/bold]")
@@ -1149,6 +1161,61 @@ def cmd_repl(
                                 CONSOLE.print(f"[green]Updated {updated} item(s)[/green]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "rename":
+                if not args:
+                    CONSOLE.print("[red]Error:[/red] rename requires a new title and optionally a new id")
+                    CONSOLE.print("  Example: rename 'New Title'")
+                    CONSOLE.print("  Example: rename 'New Title' new-id")
+                    CONSOLE.print("  Example: rename 'New Title' new-id my-item (rename specific item)")
+                    CONSOLE.print("  Example: rename 'New Title' '' my-item (update title only, keep current id)")
+                else:
+                    new_title = args[0]
+                    # Check if second arg is a new id or a path
+                    new_id = None
+                    path = current_path
+                    
+                    if len(args) > 1:
+                        # Check if second arg looks like a path (contains /) or is empty string
+                        if args[1] == "" or "/" in args[1] or args[1] in ["..", "."]:
+                            # Second arg is a path (or empty string to keep current id)
+                            path = args[1] if args[1] else current_path
+                        else:
+                            # Second arg is the new id
+                            new_id = args[1]
+                            # Third arg might be the path
+                            if len(args) > 2:
+                                path = args[2]
+                    
+                    if not path:
+                        CONSOLE.print("[red]Error:[/red] No item specified. Use 'cd' to navigate to an item or provide a path.")
+                        CONSOLE.print("  Example: rename 'New Title' new-id my-item")
+                    else:
+                        try:
+                            # Fetch current item to get current title and id
+                            _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                            current_title = data.get("title", data.get("id", "unknown"))
+                            current_id = data.get("id", "unknown")
+                            
+                            # Build update payload
+                            update_data = {"title": new_title}
+                            if new_id is not None:
+                                update_data["id"] = new_id
+                            
+                            # Build confirmation message
+                            changes = [f"title: '{current_title}' → '{new_title}'"]
+                            if new_id is not None:
+                                changes.append(f"id: '{current_id}' → '{new_id}'")
+                            confirm_msg = f"Rename item? ({', '.join(changes)})"
+                            
+                            if confirm_prompt(confirm_msg):
+                                # Update using PATCH
+                                api.patch(path, resolved_base, update_data, {}, no_auth=False)
+                                result_msg = f"Updated title to '{new_title}'"
+                                if new_id is not None:
+                                    result_msg += f" and id to '{new_id}'"
+                                CONSOLE.print(f"[green]{result_msg}[/green]")
+                        except Exception as e:
+                            CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd in ("connect", "set-base"):
                 if not args:
                     CONSOLE.print(f"Current base URL: [cyan]{resolved_base}[/cyan]")
@@ -1370,19 +1437,24 @@ def cmd_repl(
                                 if direction == "up":
                                     if current_index == 0:
                                         CONSOLE.print("[yellow]Block is already at the top[/yellow]")
+                                        continue
                                     else:
                                         new_index = current_index - 1
+                                        direction_desc = "up"
                                 elif direction == "down":
                                     if current_index == len(layout_items) - 1:
                                         CONSOLE.print("[yellow]Block is already at the bottom[/yellow]")
+                                        continue
                                     else:
                                         new_index = current_index + 1
+                                        direction_desc = "down"
                                 elif direction == "to" and len(args) > 2:
                                     try:
                                         new_index = int(args[2])
                                         if new_index < 0 or new_index >= len(layout_items):
                                             CONSOLE.print(f"[red]Error:[/red] Position must be between 0 and {len(layout_items) - 1}")
                                             continue
+                                        direction_desc = f"to position {new_index + 1}"
                                     except ValueError:
                                         CONSOLE.print("[red]Error:[/red] Position must be a number")
                                         continue
@@ -1390,19 +1462,22 @@ def cmd_repl(
                                     CONSOLE.print("[red]Error:[/red] Direction must be 'up', 'down', or 'to <position>'")
                                     continue
                                 
-                                # Move the block
-                                layout_items.pop(current_index)
-                                layout_items.insert(new_index, block_id)
-                                
-                                # Update blocks_layout
-                                if isinstance(blocks_layout, dict):
-                                    new_layout = {"items": layout_items}
-                                else:
-                                    new_layout = layout_items
-                                
-                                # Update the item
-                                api.patch(path, resolved_base, {"blocks_layout": new_layout}, {}, no_auth=False)
-                                CONSOLE.print(f"[green]Moved block '{block_id}' to position {new_index + 1}[/green]")
+                                # Get block type for confirmation message
+                                block_type = blocks[block_id].get("@type", "unknown")
+                                if confirm_prompt(f"Move block '{block_id}' ({block_type}) {direction_desc}?"):
+                                    # Move the block
+                                    layout_items.pop(current_index)
+                                    layout_items.insert(new_index, block_id)
+                                    
+                                    # Update blocks_layout
+                                    if isinstance(blocks_layout, dict):
+                                        new_layout = {"items": layout_items}
+                                    else:
+                                        new_layout = layout_items
+                                    
+                                    # Update the item
+                                    api.patch(path, resolved_base, {"blocks_layout": new_layout}, {}, no_auth=False)
+                                    CONSOLE.print(f"[green]Moved block '{block_id}' to position {new_index + 1}[/green]")
                     except Exception as e:
                         CONSOLE.print(f"[red]Error:[/red] {e}")
             else:
