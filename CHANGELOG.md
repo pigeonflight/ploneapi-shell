@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.18] - 2025-01-XX
+
+### Added
+- **Object rename commands**: New commands for renaming Plone objects
+  - `rename <new_title> [path]` - Rename item title (update the title field)
+  - `set-id <new_id> [path]` - Change item id/shortname/objectname (update the id field)
+  - Both commands support optional path argument to target specific items
+  - Both commands require confirmation (respect `-y` flag)
+  - Path autocompletion works for both commands
+- **Move command**: New `mv` command to move items between folders
+  - `mv <source> <dest>` - Move item to new location
+  - `mv <source> <dest-folder/new-name>` - Move and rename in one operation
+  - Uses Plone REST API's `@move` endpoint
+  - Requires confirmation (respects `-y` flag)
+  - Path autocompletion for both source and destination
+
+### Changed
+- **Improved error messages**: Better error handling for `set-id` command
+  - Clear syntax explanation when item not found (404 errors)
+  - Helpful hints and examples for correct usage
+  - Distinguishes between path errors and other API errors
+
 ## [0.1.17] - 2025-01-XX
 
 ### Added

@@ -317,7 +317,7 @@ def cmd_repl(
     except Exception:
         history = None
     
-    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "blocks", "show-block", "delete-block", "move-block", "rename", "connect", "login", "logout", "help", "exit", "quit"]
+    COMMANDS = ["ls", "cd", "pwd", "get", "items", "raw", "components", "tags", "similar-tags", "merge-tags", "rename-tag", "remove-tag", "search", "blocks", "show-block", "delete-block", "move-block", "rename", "set-id", "mv", "cp", "connect", "login", "logout", "help", "exit", "quit"]
 
     class ReplCompleter(Completer):
         _tag_cache: Optional[List[str]] = None
@@ -552,12 +552,54 @@ def cmd_repl(
                             yield from handle_path_completion("move-block", 2)
             
             elif cmd == "rename":
-                # rename <new_name> [path] - path is optional, comes after new name
+                # rename <new_title> [path] - path is optional, comes after new title
                 if len(parts) > 1:
-                    # We have at least the new name, check if we're typing a path
+                    # We have at least the new title, check if we're typing a path
                     if len(parts) > 2 or (len(parts) == 2 and has_trailing_space):
-                        # We have a path argument (or space after new name)
+                        # We have a path argument (or space after new title)
                         yield from handle_path_completion("rename", 1)
+            
+            elif cmd == "set-id":
+                # set-id <new_id> [path] - path is optional, comes after new id
+                if len(parts) > 1:
+                    # We have at least the new id, check if we're typing a path
+                    if len(parts) > 2 or (len(parts) == 2 and has_trailing_space):
+                        # We have a path argument (or space after new id)
+                        yield from handle_path_completion("set-id", 1)
+            
+            elif cmd == "mv":
+                # mv <source> <dest> - both are paths
+                if len(parts) > 1:
+                    # First arg is source, suggest paths
+                    if len(parts) == 2:
+                        # Typing source path
+                        yield from handle_path_completion("mv", 0)
+                    elif len(parts) > 2:
+                        # Have source, typing destination
+                        # Extract destination path from text
+                        arg_start = text.find("mv", 0) + len("mv")
+                        if arg_start < len(text):
+                            path_text = text[arg_start:].lstrip()
+                            # Skip source argument
+                            if " " in path_text:
+                                dest_text = path_text.split(" ", 1)[1].lstrip()
+                                if dest_text:
+                                    # Handle path completion for destination
+                                    if "/" in dest_text:
+                                        path_parts = dest_text.rsplit("/", 1)
+                                        if len(path_parts) == 2:
+                                            dir_path, prefix = path_parts
+                                            suggestions = self._item_suggestions(dir_path)
+                                            for suggestion in suggestions:
+                                                if suggestion.startswith(prefix):
+                                                    full_suggestion = f"{dir_path}/{suggestion}"
+                                                    yield Completion(full_suggestion, start_position=-len(dest_text))
+                                    else:
+                                        suggestions = self._item_suggestions()
+                                        prefix = dest_text if not has_trailing_space else ""
+                                        for suggestion in suggestions:
+                                            if suggestion.startswith(prefix):
+                                                yield Completion(suggestion, start_position=-len(dest_text))
             
             # Tag suggestions for tag management commands
             elif cmd in ("merge-tags", "rename-tag", "remove-tag", "similar-tags"):
@@ -649,13 +691,16 @@ def cmd_repl(
                 CONSOLE.print("  [cyan]rename-tag <old_name> <new_name>[/cyan] - Rename a tag")
                 CONSOLE.print("  [cyan]remove-tag <tag>[/cyan] - Remove a tag from all items")
                 CONSOLE.print("\n[bold]File Operations:[/bold]")
-                CONSOLE.print("  [cyan]rename <new_title> [new_id] [path][/cyan] - Rename item (update title and/or id)")
+                CONSOLE.print("  [cyan]rename <new_title> [path][/cyan] - Rename item title")
+                CONSOLE.print("  [cyan]set-id <new_id> [path][/cyan] - Change item id (shortname/objectname)")
+                CONSOLE.print("  [cyan]mv <source> <dest>[/cyan] - Move item to new location (optionally rename)")
                 CONSOLE.print("    Examples: rename 'New Title'")
-                CONSOLE.print("              rename 'New Title' new-id")
-                CONSOLE.print("              rename 'New Title' new-id my-item")
-                CONSOLE.print("              rename 'New Title' '' my-item (title only, keep current id)")
+                CONSOLE.print("              rename 'New Title' my-item")
+                CONSOLE.print("              set-id new-id")
+                CONSOLE.print("              set-id new-id my-item")
+                CONSOLE.print("              mv my-item new-folder")
+                CONSOLE.print("              mv my-item new-folder/new-name (move and rename)")
                 CONSOLE.print("  [cyan]cp <source> <dest>[/cyan] - Copy item")
-                CONSOLE.print("  [cyan]mv <source> <dest>[/cyan] - Move item")
                 CONSOLE.print("\n[bold]Workflow:[/bold]")
                 CONSOLE.print("  [cyan]transitions[/cyan]     - List available workflow transitions")
                 CONSOLE.print("  [cyan]transition <name>[/cyan] - Execute a workflow transition")
@@ -1163,59 +1208,115 @@ def cmd_repl(
                         CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd == "rename":
                 if not args:
-                    CONSOLE.print("[red]Error:[/red] rename requires a new title and optionally a new id")
+                    CONSOLE.print("[red]Error:[/red] rename requires a new title")
                     CONSOLE.print("  Example: rename 'New Title'")
-                    CONSOLE.print("  Example: rename 'New Title' new-id")
-                    CONSOLE.print("  Example: rename 'New Title' new-id my-item (rename specific item)")
-                    CONSOLE.print("  Example: rename 'New Title' '' my-item (update title only, keep current id)")
+                    CONSOLE.print("  Example: rename 'New Title' my-item (rename specific item)")
                 else:
                     new_title = args[0]
-                    # Check if second arg is a new id or a path
-                    new_id = None
-                    path = current_path
-                    
-                    if len(args) > 1:
-                        # Check if second arg looks like a path (contains /) or is empty string
-                        if args[1] == "" or "/" in args[1] or args[1] in ["..", "."]:
-                            # Second arg is a path (or empty string to keep current id)
-                            path = args[1] if args[1] else current_path
-                        else:
-                            # Second arg is the new id
-                            new_id = args[1]
-                            # Third arg might be the path
-                            if len(args) > 2:
-                                path = args[2]
+                    path = args[1] if len(args) > 1 else current_path
                     
                     if not path:
                         CONSOLE.print("[red]Error:[/red] No item specified. Use 'cd' to navigate to an item or provide a path.")
-                        CONSOLE.print("  Example: rename 'New Title' new-id my-item")
+                        CONSOLE.print("  Example: rename 'New Title' my-item")
                     else:
                         try:
-                            # Fetch current item to get current title and id
+                            # Fetch current item to get current title
                             _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
                             current_title = data.get("title", data.get("id", "unknown"))
-                            current_id = data.get("id", "unknown")
                             
-                            # Build update payload
-                            update_data = {"title": new_title}
-                            if new_id is not None:
-                                update_data["id"] = new_id
-                            
-                            # Build confirmation message
-                            changes = [f"title: '{current_title}' → '{new_title}'"]
-                            if new_id is not None:
-                                changes.append(f"id: '{current_id}' → '{new_id}'")
-                            confirm_msg = f"Rename item? ({', '.join(changes)})"
-                            
-                            if confirm_prompt(confirm_msg):
-                                # Update using PATCH
-                                api.patch(path, resolved_base, update_data, {}, no_auth=False)
-                                result_msg = f"Updated title to '{new_title}'"
-                                if new_id is not None:
-                                    result_msg += f" and id to '{new_id}'"
-                                CONSOLE.print(f"[green]{result_msg}[/green]")
+                            if confirm_prompt(f"Rename title from '{current_title}' to '{new_title}'?"):
+                                # Update the title using PATCH
+                                api.patch(path, resolved_base, {"title": new_title}, {}, no_auth=False)
+                                CONSOLE.print(f"[green]Renamed title to '{new_title}'[/green]")
                         except Exception as e:
                             CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "set-id":
+                if not args:
+                    CONSOLE.print("[red]Error:[/red] set-id requires a new id")
+                    CONSOLE.print("  Example: set-id new-id")
+                    CONSOLE.print("  Example: set-id new-id my-item (set id for specific item)")
+                else:
+                    new_id = args[0]
+                    path = args[1] if len(args) > 1 else current_path
+                    
+                    if not path:
+                        CONSOLE.print("[red]Error:[/red] No item specified. Use 'cd' to navigate to an item or provide a path.")
+                        CONSOLE.print("  Example: set-id new-id my-item")
+                    else:
+                        try:
+                            # Fetch current item to get current id
+                            _, data = fetch(path, resolved_base, {}, {}, no_auth=False)
+                            current_id = data.get("id", "unknown")
+                            
+                            if confirm_prompt(f"Change id from '{current_id}' to '{new_id}'?"):
+                                # Update the id using PATCH
+                                api.patch(path, resolved_base, {"id": new_id}, {}, no_auth=False)
+                                CONSOLE.print(f"[green]Changed id to '{new_id}'[/green]")
+                        except (CliError, api.APIError) as e:
+                            error_msg = str(e)
+                            # Check for 404 errors - CliError wraps the APIError message
+                            if "404" in error_msg:
+                                CONSOLE.print(f"[red]Error:[/red] Item at path '{path}' not found")
+                                CONSOLE.print(f"[yellow]Syntax:[/yellow] set-id <new_id> <path>")
+                                CONSOLE.print(f"[yellow]Hint:[/yellow] The path '{path}' doesn't exist. Use 'cd' to navigate to the item first, or check the path is correct")
+                                CONSOLE.print(f"[yellow]Example:[/yellow] cd my-item (then) set-id new-id")
+                                CONSOLE.print(f"[yellow]Example:[/yellow] set-id new-id correct/path/to/item")
+                                # Don't print the raw error message for 404s since we've explained it
+                            else:
+                                CONSOLE.print(f"[red]Error:[/red] {e}")
+                        except Exception as e:
+                            CONSOLE.print(f"[red]Error:[/red] {e}")
+            elif cmd == "mv":
+                if len(args) < 2:
+                    CONSOLE.print("[red]Error:[/red] mv requires a source and destination")
+                    CONSOLE.print("  Example: mv my-item new-folder")
+                    CONSOLE.print("  Example: mv my-item new-folder/new-name (move and rename)")
+                    CONSOLE.print("  Example: mv folder/item new-folder")
+                else:
+                    source_path = args[0]
+                    dest_path = args[1]
+                    
+                    try:
+                        # Fetch source to get current info
+                        _, source_data = fetch(source_path, resolved_base, {}, {}, no_auth=False)
+                        source_title = source_data.get("title", source_data.get("id", "unknown"))
+                        source_id = source_data.get("id", "unknown")
+                        
+                        # Check if destination includes a new name
+                        new_id = None
+                        dest_parts = dest_path.rstrip("/").split("/")
+                        if len(dest_parts) > 1 and not dest_path.endswith("/"):
+                            # Last part is the new name
+                            new_id = dest_parts[-1]
+                            dest_folder = "/".join(dest_parts[:-1])
+                        else:
+                            dest_folder = dest_path
+                        
+                        # Fetch destination to verify it exists and is a folder
+                        try:
+                            _, dest_data = fetch(dest_folder, resolved_base, {}, {}, no_auth=False)
+                            dest_title = dest_data.get("title", dest_data.get("id", dest_folder))
+                        except Exception:
+                            CONSOLE.print(f"[red]Error:[/red] Destination '{dest_folder}' not found or not accessible")
+                            continue
+                        
+                        # Build confirmation message
+                        move_msg = f"Move '{source_title}' ({source_id}) to '{dest_title}'"
+                        if new_id:
+                            move_msg += f" as '{new_id}'"
+                        move_msg += "?"
+                        
+                        if confirm_prompt(move_msg):
+                            # Perform the move
+                            api.move_item(resolved_base, source_path, dest_folder, new_id, no_auth=False)
+                            result_msg = f"Moved '{source_title}' to '{dest_title}'"
+                            if new_id:
+                                result_msg += f" as '{new_id}'"
+                            CONSOLE.print(f"[green]{result_msg}[/green]")
+                    except api.APIError as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
+                    except Exception as e:
+                        CONSOLE.print(f"[red]Error:[/red] {e}")
             elif cmd in ("connect", "set-base"):
                 if not args:
                     CONSOLE.print(f"Current base URL: [cyan]{resolved_base}[/cyan]")

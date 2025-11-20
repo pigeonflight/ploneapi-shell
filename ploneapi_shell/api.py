@@ -1112,6 +1112,79 @@ def update_item_subjects(base: str, item_path: str, subjects: List[str], no_auth
                             ) from e6
 
 
+def move_item(base: str, source_path: str, dest_path: str, new_id: Optional[str] = None, no_auth: bool = False) -> Dict[str, Any]:
+    """Move an item to a new location.
+    
+    Args:
+        base: Base API URL
+        source_path: Path to the item to move
+        dest_path: Destination folder path (or folder/new-id to rename during move)
+        new_id: Optional new id/name for the item (if None, keeps current id)
+        no_auth: Whether to skip authentication
+        
+    Returns:
+        Response data from the move operation
+    """
+    # Ensure base is a string
+    if not isinstance(base, str):
+        base = get_base_url(None)
+    
+    # Resolve source and destination URLs
+    source_url = resolve_url(source_path, base)
+    dest_url = resolve_url(dest_path, base)
+    
+    # Check if dest_path includes a new name (has a slash with something after)
+    # If dest_path ends with a name (not just a folder), extract folder and new_id
+    dest_parts = dest_path.rstrip("/").split("/")
+    if len(dest_parts) > 1 and not dest_path.endswith("/"):
+        # Last part is the new name
+        dest_folder = "/".join(dest_parts[:-1])
+        if not new_id:
+            new_id = dest_parts[-1]
+        dest_url = resolve_url(dest_folder, base)
+    
+    # Use @move endpoint: POST to destination/@move with source reference
+    move_url = dest_url.rstrip("/") + "/@move"
+    prepared_headers = apply_auth({}, base, no_auth)
+    if "Content-Type" not in prepared_headers:
+        prepared_headers["Content-Type"] = "application/json"
+    if "Accept" not in prepared_headers:
+        prepared_headers["Accept"] = "application/json"
+    
+    # Build move payload
+    move_data = {"source": source_url}
+    if new_id:
+        move_data["id"] = new_id
+    
+    try:
+        response = httpx.post(
+            move_url,
+            json=move_data,
+            headers=prepared_headers or None,
+            timeout=15,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        error_msg = f"Move failed with status {exc.response.status_code} for {move_url}"
+        try:
+            error_data = exc.response.json()
+            if "message" in error_data:
+                error_msg += f": {error_data['message']}"
+            elif "error" in error_data:
+                error_msg += f": {error_data['error']}"
+        except ValueError:
+            pass
+        raise APIError(error_msg) from exc
+    except httpx.RequestError as exc:
+        raise APIError(f"Unable to reach {move_url}: {exc}") from exc
+    
+    try:
+        data = response.json() if response.content else {}
+    except ValueError:
+        data = {}
+    return data
+
+
 def find_similar_tags(base: str, query_tag: Optional[str] = None, path: str = "", threshold: int = 70, no_auth: bool = False) -> List[Tuple[str, int, int, Optional[str]]]:
     """
     Find tags similar to the query tag using fuzzy matching.
