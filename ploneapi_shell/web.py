@@ -331,6 +331,9 @@ with st.sidebar:
     st.title("Plone API Shell")
     st.caption("Web interface for exploring Plone REST API")
     
+    # Mention desktop alternative
+    st.info("💡 **Prefer point-and-click?** Try [Ploa](https://ploa.incrementic.com) - a desktop application designed for graphical interfaces.")
+    
     st.divider()
     
     # Base URL configuration
@@ -395,17 +398,130 @@ with st.sidebar:
         """)
 
 
-# Main interface
-st.title("Plone API Shell")
-st.caption(f"Base URL: `{st.session_state.base_url}`")
+# Add CSS for chat-like interface (like mobile chat apps)
+st.markdown("""
+<style>
+    /* Hide Streamlit header/footer */
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
+    
+    footer {
+        display: none !important;
+    }
+    
+    /* Prevent body scrolling */
+    body, html, #root {
+        overflow: hidden !important;
+        height: 100vh !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    
+    /* Main app container - full viewport */
+    .main {
+        height: 100vh !important;
+        overflow: hidden !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    
+    /* Block container - no padding, full height */
+    .main .block-container {
+        padding: 0 !important;
+        max-width: 100% !important;
+        height: 100vh !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
+    }
+    
+    /* Title bar - fixed at top */
+    .chat-title {
+        padding: 1rem !important;
+        background: white !important;
+        border-bottom: 1px solid #e0e0e0 !important;
+        flex-shrink: 0 !important;
+        z-index: 100 !important;
+    }
+    
+    /* Chat output area - scrollable, fills remaining space */
+    .chat-output-area {
+        flex: 1 1 auto !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding: 1rem !important;
+        background: #fafafa !important;
+        /* Reserve space for fixed input */
+        padding-bottom: 90px !important;
+        min-height: 0 !important;
+    }
+    
+    /* Chat message styling */
+    .chat-message {
+        margin-bottom: 1rem !important;
+        padding: 0.75rem 1rem !important;
+        border-radius: 8px !important;
+        background: white !important;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.1) !important;
+    }
+    
+    .chat-command {
+        font-family: monospace !important;
+        font-weight: bold !important;
+        color: #1f77b4 !important;
+        margin-bottom: 0.5rem !important;
+    }
+    
+    /* Fixed input area - always at viewport bottom */
+    .chat-input-area {
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        background: white !important;
+        padding: 1rem !important;
+        border-top: 2px solid #e0e0e0 !important;
+        z-index: 9999 !important;
+        box-shadow: 0 -2px 10px rgba(0,0,0,0.1) !important;
+        /* Remove from document flow */
+        position: fixed !important;
+    }
+    
+    /* Account for sidebar width */
+    section[data-testid="stSidebar"] ~ .main .chat-input-area {
+        left: var(--sidebar-width, 0px) !important;
+    }
+    
+    /* Ensure Streamlit elements don't interfere */
+    .element-container {
+        position: relative !important;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# Display command history at the top (most recent first)
+# Chat-like interface
+st.markdown(f'''
+<div class="chat-title">
+    <h1>Plone API Shell</h1>
+    <p style="margin:0;color:#666;">Base URL: <code>{st.session_state.base_url}</code></p>
+    <p style="margin:0.5rem 0 0 0;font-size:0.85em;color:#888;">
+        💡 Prefer point-and-click? Try <a href="https://ploa.incrementic.com" target="_blank" style="color:#1f77b4;">Ploa</a> - a desktop application for graphical interfaces.
+    </p>
+</div>
+''', unsafe_allow_html=True)
+
+# Create scrollable chat output area
+st.markdown('<div class="chat-output-area" id="chat-output">', unsafe_allow_html=True)
+
+# Display command history in chronological order (oldest to newest, like chat)
 if st.session_state.command_history:
-    st.divider()
-    # Show history in reverse order (most recent at top)
-    for entry in reversed(st.session_state.command_history):
+    for entry in st.session_state.command_history:
+        # Chat message container
+        st.markdown('<div class="chat-message">', unsafe_allow_html=True)
+        
         # Show command
-        st.markdown(f"**Command:** `{entry['command']}`")
+        st.markdown(f'<div class="chat-command">$ {entry["command"]}</div>', unsafe_allow_html=True)
         
         # Show result
         result = entry["result"]
@@ -421,19 +537,140 @@ if st.session_state.command_history:
         if isinstance(result["output"], dict) and "url" in result["output"]:
             st.caption(f"URL: `{result['output']['url']}`")
         
-        st.divider()
+        st.markdown('</div>', unsafe_allow_html=True)
+else:
+    # Welcome message when no commands yet
+    st.markdown('<div class="chat-message"><p style="color:#666;margin:0;">Type a command to get started. Try <code>ls</code> or <code>help</code></p></div>', unsafe_allow_html=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
 
 # Reset command input if flagged (must happen before widget instantiation)
 if st.session_state.get("command_input_reset"):
     st.session_state.command_input = ""
     st.session_state.command_input_reset = False
 
-# Command input at the bottom
+# Create a placeholder for the input that will be moved by JavaScript
+st.markdown('<div id="input-placeholder" style="height: 80px;"></div>', unsafe_allow_html=True)
+
+# Command input (will be moved to fixed position by JavaScript)
 command_input = st.text_input(
     "Enter command",
-    placeholder="ls, cd, get, items, raw, components, help...",
+    placeholder="Type a command (e.g., ls, cd, get, help)...",
     key="command_input",
+    label_visibility="collapsed",
 )
+
+# JavaScript to move input to fixed position and maintain chat interface
+st.markdown("""
+<script>
+    (function() {
+        function setupChatInterface() {
+            // Find the text input widget
+            const inputs = document.querySelectorAll('div[data-testid="stTextInput"]');
+            let commandInput = null;
+            
+            inputs.forEach(input => {
+                const label = input.querySelector('label');
+                if (label && label.textContent.includes('Enter command')) {
+                    commandInput = input;
+                }
+            });
+            
+            // If not found by label, use the last one
+            if (!commandInput && inputs.length > 0) {
+                commandInput = inputs[inputs.length - 1];
+            }
+            
+            if (commandInput) {
+                // Find the element-container parent
+                let container = commandInput.closest('.element-container');
+                if (!container) {
+                    container = commandInput.parentElement;
+                }
+                
+                if (container) {
+                    // Create fixed input area if it doesn't exist
+                    let fixedArea = document.getElementById('fixed-command-input');
+                    if (!fixedArea) {
+                        fixedArea = document.createElement('div');
+                        fixedArea.id = 'fixed-command-input';
+                        fixedArea.className = 'chat-input-area';
+                        document.body.appendChild(fixedArea);
+                    }
+                    
+                    // Move the input container to fixed area
+                    if (container.parentElement !== fixedArea) {
+                        fixedArea.innerHTML = '';
+                        fixedArea.appendChild(container);
+                    }
+                    
+                    // Ensure fixed positioning
+                    fixedArea.style.position = 'fixed';
+                    fixedArea.style.bottom = '0';
+                    fixedArea.style.left = '0';
+                    fixedArea.style.right = '0';
+                    fixedArea.style.background = 'white';
+                    fixedArea.style.padding = '1rem';
+                    fixedArea.style.borderTop = '2px solid #e0e0e0';
+                    fixedArea.style.zIndex = '9999';
+                    fixedArea.style.boxShadow = '0 -2px 10px rgba(0,0,0,0.1)';
+                    
+                    // Adjust for sidebar
+                    const sidebar = document.querySelector('section[data-testid="stSidebar"]');
+                    if (sidebar) {
+                        const sidebarWidth = sidebar.offsetWidth || 0;
+                        fixedArea.style.left = sidebarWidth + 'px';
+                    } else {
+                        fixedArea.style.left = '0';
+                    }
+                }
+            }
+            
+            // Auto-scroll output to bottom
+            const chatOutput = document.getElementById('chat-output');
+            if (chatOutput) {
+                chatOutput.scrollTop = chatOutput.scrollHeight;
+            }
+        }
+        
+        // Run immediately and repeatedly
+        setupChatInterface();
+        setTimeout(setupChatInterface, 50);
+        setTimeout(setupChatInterface, 100);
+        setTimeout(setupChatInterface, 200);
+        setTimeout(setupChatInterface, 500);
+        setTimeout(setupChatInterface, 1000);
+        
+        // Watch for DOM changes
+        const observer = new MutationObserver(() => {
+            setTimeout(setupChatInterface, 50);
+        });
+        
+        // Observe everything
+        observer.observe(document.body, { 
+            childList: true, 
+            subtree: true,
+            attributes: true
+        });
+        
+        // Handle window resize
+        window.addEventListener('resize', setupChatInterface);
+        
+        // Handle sidebar toggle
+        const sidebar = document.querySelector('section[data-testid="stSidebar"]');
+        if (sidebar) {
+            const sidebarObserver = new MutationObserver(() => {
+                setTimeout(setupChatInterface, 100);
+            });
+            sidebarObserver.observe(sidebar, { 
+                attributes: true, 
+                attributeFilter: ['class', 'style'],
+                childList: true
+            });
+        }
+    })();
+</script>
+""", unsafe_allow_html=True)
 
 if command_input:
     # Parse command

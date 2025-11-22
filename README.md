@@ -4,6 +4,8 @@ Interactive command-line shell and CLI tool for exploring Plone REST API sites.
 
 Most modern **Plone 6.x** sites expose their REST API at `siteroot/++api++`. This tool provides an interactive shell with filesystem-like navigation (`ls`, `cd`, `pwd`) plus direct API commands for exploring Plone content.
 
+**Prefer a point-and-click interface?** Check out [Ploa](https://ploa.incrementic.com) - a desktop application designed for users who prefer a graphical interface over the command line.
+
 ## Installation
 
 ```bash
@@ -131,6 +133,8 @@ This opens a Streamlit web interface at `http://localhost:8501` with:
 - Command history
 
 The web interface provides the same functionality as the REPL but with a browser-based UI, making it easier to view and interact with Plone content.
+
+**Desktop Alternative:** For a native desktop application with a point-and-click interface, check out [Ploa](https://ploa.incrementic.com) - designed for users who prefer graphical interfaces over command-line tools.
 
 ### 4b. Desktop UI (SvelteKit)
 

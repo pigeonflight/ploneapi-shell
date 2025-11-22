@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.22] - 2025-01-XX
 
+### Added
+- **Ploa desktop alternative mention**: Added references to [Ploa](https://ploa.incrementic.com) - a desktop application designed for users who prefer point-and-click interfaces over command-line tools
+  - Mentioned in README introduction and web interface section
+  - Added info box in Streamlit web UI sidebar
+  - Added link in web UI title area
+
+### Changed
+- **Improved Streamlit web UI**: Enhanced chat-like interface with better fixed input positioning
+  - Command input now properly fixed at bottom of viewport
+  - Improved JavaScript to maintain fixed positioning after Streamlit reruns
+  - Better layout structure to prevent input from scrolling off screen
+
 ### Fixed
 - **Streamlit command repetition**: Clearing the command input now happens safely before the widget is instantiated, preventing duplicate command execution in the web UI.
 
