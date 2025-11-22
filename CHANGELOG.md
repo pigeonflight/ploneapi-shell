@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.23] - 2025-01-XX
+
+### Changed
+- **Streamlit web UI improvements**: Further refinements to the chat-like interface
+  - Enhanced fixed input positioning to ensure it stays at viewport bottom
+  - Improved JavaScript handling for better reliability across Streamlit reruns
+
 ## [0.1.22] - 2025-01-XX
 
 ### Added
