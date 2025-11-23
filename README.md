@@ -4,7 +4,7 @@ Interactive command-line shell and CLI tool for exploring Plone REST API sites.
 
 Most modern **Plone 6.x** sites expose their REST API at `siteroot/++api++`. This tool provides an interactive shell with filesystem-like navigation (`ls`, `cd`, `pwd`) plus direct API commands for exploring Plone content.
 
-**Prefer a point-and-click interface?** Check out [Ploa](https://ploa.incrementic.com) - a desktop application designed for users who prefer a graphical interface over the command line.
+**Prefer a point-and-click interface?** Check out **[Ploa - The Plone Desktop Companion](https://ploa.incrementic.com)** - a native desktop application designed for users who prefer a graphical interface over the command line.
 
 ## Installation
 
@@ -103,7 +103,6 @@ Inside the shell, use filesystem-like commands:
 - `rename-tag <old> <new>` - Rename a tag
 - `remove-tag <tag>` - Remove a tag from all items
 - `help` - Show all commands
-- `serve` - Start the local HTTP API for the desktop UI
 - `logout` - Remove saved credentials (same as the CLI `logout` command)
 - `exit` / `quit` - Leave the interactive shell (does not remove saved credentials)
 
@@ -134,48 +133,7 @@ This opens a Streamlit web interface at `http://localhost:8501` with:
 
 The web interface provides the same functionality as the REPL but with a browser-based UI, making it easier to view and interact with Plone content.
 
-**Desktop Alternative:** For a native desktop application with a point-and-click interface, check out [Ploa](https://ploa.incrementic.com) - designed for users who prefer graphical interfaces over command-line tools.
-
-### 4b. Desktop UI (SvelteKit)
-
-We're actively building a modern desktop interface using SvelteKit + FastAPI.
-
-1. Start the backend bridge:
-   ```bash
-   ploneapi-shell serve --host 127.0.0.1 --port 8787
-   ```
-2. Run the SvelteKit app:
-   ```bash
-   cd ui
-   bun run dev --open
-   ```
-
-The Svelte UI talks to the `serve` API (`/api/get`, `/api/items`, etc.), giving you a fast desktop-like experience that will replace the Streamlit prototype over time.
-
-For a native macOS build we embed the Svelte assets inside a Tauri shell:
-
-```bash
-cd ui
-# run the desktop app in dev mode (spawns bun dev + tauri)
-bun run desktop:dev
-
-# produce a signed .app / DMG under ui/src-tauri/target
-bun run desktop:build
-```
-
-The Tauri app automatically launches `ploneapi-shell serve` on startup. If your CLI lives in a virtualenv, point the app to it with `PLONEAPI_SHELL_CMD=/path/to/venv/bin/ploneapi-shell` before running the desktop binaries.
-
-**Available REST endpoints**
-
-- `GET /api/health` – quick status check for the bridge
-- `GET /api/config` – returns the currently saved base URL
-- `GET /api/get?path=/news` – fetches JSON for any path (supports `raw=true`)
-- `GET /api/items?path=/news` – lists folderish content with metadata
-- `GET /api/tags?path=/news` – aggregated Subject counts
-- `GET /api/similar-tags?tag=swimming&threshold=80`
-- `POST /api/tags/merge` – merge multiple tags into one (accepts `dry_run`)
-- `POST /api/tags/rename` – rename a tag (same payload as merge but single tag)
-- `POST /api/tags/remove` – remove a tag from every item
+**Desktop Alternative:** Looking for a native desktop application with a point-and-click interface? Check out **[Ploa - The Plone Desktop Companion](https://ploa.incrementic.com)** - designed for users who prefer graphical interfaces over command-line tools.
 
 ### 5. Tag Management
 
@@ -480,15 +438,6 @@ Launch interactive shell with tab completion and filesystem-like navigation. Thi
 Launch web-based interface using Streamlit. Opens at `http://localhost:8501` by default.
 - `--port, -p` - Port to run on (default: 8501)
 - `--host, -h` - Host to bind to (default: localhost)
-
-### `serve`
-Start the lightweight FastAPI bridge that powers the new SvelteKit-based desktop UI.  
-The server listens on `http://127.0.0.1:8787` by default and exposes REST endpoints that mirror the interactive commands (`/api/get`, `/api/items`, etc.).
-
-- `--host, -h` - Host interface (default: 127.0.0.1)
-- `--port, -p` - Port to listen on (default: 8787)
-- `--reload` - Enable auto-reload while developing the UI
-- `--allow-origin` - Additional CORS origin allowed to call the API (repeatable)
 
 ### `tags [PATH]`
 List all tags (subjects) with their frequency across the site or a specific path.

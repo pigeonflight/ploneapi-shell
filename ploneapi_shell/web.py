@@ -332,7 +332,7 @@ with st.sidebar:
     st.caption("Web interface for exploring Plone REST API")
     
     # Mention desktop alternative
-    st.info("💡 **Prefer point-and-click?** Try [Ploa](https://ploa.incrementic.com) - a desktop application designed for graphical interfaces.")
+    st.info("💡 **Prefer point-and-click?** Try **[Ploa - The Plone Desktop Companion](https://ploa.incrementic.com)** - a native desktop application designed for graphical interfaces.")
     
     st.divider()
     
@@ -506,7 +506,7 @@ st.markdown(f'''
     <h1>Plone API Shell</h1>
     <p style="margin:0;color:#666;">Base URL: <code>{st.session_state.base_url}</code></p>
     <p style="margin:0.5rem 0 0 0;font-size:0.85em;color:#888;">
-        💡 Prefer point-and-click? Try <a href="https://ploa.incrementic.com" target="_blank" style="color:#1f77b4;">Ploa</a> - a desktop application for graphical interfaces.
+        💡 Prefer point-and-click? Try <a href="https://ploa.incrementic.com" target="_blank" style="color:#1f77b4;"><strong>Ploa - The Plone Desktop Companion</strong></a> - a native desktop application for graphical interfaces.
     </p>
 </div>
 ''', unsafe_allow_html=True)

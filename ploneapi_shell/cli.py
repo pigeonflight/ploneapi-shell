@@ -1681,27 +1681,6 @@ def cmd_logout() -> None:
         CONSOLE.print("No saved credentials found.")
 
 
-@APP.command("serve")
-def cmd_serve(
-    host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host interface for the API server."),
-    port: int = typer.Option(8787, "--port", "-p", help="Port for the API server."),
-    reload: bool = typer.Option(False, "--reload", help="Enable auto-reload (development only)."),
-    allow_origin: List[str] = typer.Option(
-        [],
-        "--allow-origin",
-        help="Additional CORS origin allowed to access the API. Repeat to add more.",
-    ),
-) -> None:
-    """Start the HTTP server used by the SvelteKit desktop UI."""
-    from . import server
-
-    origins = allow_origin or None
-    try:
-        server.run_server(host=host, port=port, reload=reload, allowed_origins=origins)
-    except KeyboardInterrupt:
-        CONSOLE.print("\n[dim]Server stopped[/dim]")
-
-
 @APP.command("tags")
 def cmd_tags(
     path: str = typer.Argument("", help="Path to analyze (defaults to current/root)."),
